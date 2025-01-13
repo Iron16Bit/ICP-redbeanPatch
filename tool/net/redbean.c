@@ -7464,7 +7464,140 @@ void RedBean(int argc, char *argv[]) {
   }
 }
 
+// Modified redbean start here
+void handle_client(int client_socket) {
+  #define BUFFER_SIZE 1024
+
+  char buffer[BUFFER_SIZE];
+  int bytes_received;
+
+  printf("Client connected\n");
+
+  // Echo loop: read data from the client and send it back
+  while ((bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0)) > 0) {
+      buffer[bytes_received] = '\0'; // Null-terminate the received data
+      printf("Received: %s", buffer);
+
+      // Send the data back to the client
+      send(client_socket, buffer, bytes_received, 0);
+  }
+
+  // Close the connection
+  printf("Client disconnected\n");
+  close(client_socket);
+}
+
+void server_main() {
+  int server_socket;
+  struct sockaddr_in server_addr;
+
+  // Create a socket
+  server_socket = socket(AF_INET, SOCK_STREAM, 0);
+  if (server_socket == -1) {
+      perror("Socket creation failed");
+      exit(EXIT_FAILURE);
+  }
+
+  // Configure server address structure
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+  server_addr.sin_port = htons(3000);
+
+  // Bind the socket to the address and port
+  if (bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
+      perror("Bind failed");
+      close(server_socket);
+      exit(EXIT_FAILURE);
+  }
+
+  // Start listening for incoming connections
+  if (listen(server_socket, 5) == -1) {
+      perror("Listen failed");
+      close(server_socket);
+      exit(EXIT_FAILURE);
+  }
+
+  printf("Websocket server running!\n");
+
+  // Main loop: accept and handle clients
+  while (1) {
+      int client_socket = accept(server_socket, NULL, NULL);
+      if (client_socket == -1) {
+          perror("Accept failed");
+          continue;
+      }
+
+      handle_client(client_socket);
+  }
+
+  // Clean up
+  close(server_socket);
+}
+
+//TODO REMOVE!!!!
+int test() {
+  #define BUFFER_SIZE 1024
+
+  int client_socket;
+  struct sockaddr_in server_addr;
+  char buffer[BUFFER_SIZE];
+
+  // Create a socket
+  client_socket = socket(AF_INET, SOCK_STREAM, 0);
+  if (client_socket == -1) {
+      perror("Socket creation failed");
+      return 1;
+  }
+
+  // Configure server address
+  memset(&server_addr, 0, sizeof(server_addr)); // Zero out the structure
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(3000);
+  server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+  // Connect to the server
+  if (connect(client_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
+      perror("Connection to the server failed");
+      close(client_socket);
+      return 1;
+  }
+
+  printf("Connected to the server\n");
+
+  // Send a WebSocket-like message to the server
+  const char *message = "Hello, WebSocket Server!";
+  printf("Sending: %s\n", message);
+  send(client_socket, message, strlen(message), 0);
+
+  // Receive the response from the server
+  int bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+  if (bytes_received > 0) {
+      buffer[bytes_received] = '\0'; // Null-terminate the received data
+      printf("Received from server: %s\n", buffer);
+  } else {
+      printf("No response or connection closed by the server\n");
+  }
+
+  // Close the connection
+  close(client_socket);
+  printf("Connection closed\n");
+
+  return 0;
+}
+
+
 int main(int argc, char *argv[]) {
+  if (fork() == 0) {
+    server_main();
+    exit(0);
+  }
+  if (fork() == 0) {
+    sleep(5);
+    test();
+    exit(0);
+  }
+  // End here
+
   lua_progname = "redbean";
 
 #if !IsTiny()
