@@ -277,3 +277,9 @@ the following groups and individuals:
 - [Wasmer](https://wasmer.io/)
 
 For publicly sponsoring our work at the highest tier.
+
+## Personal reminders
+
+Build: sudo make -j8 o//tool/net/redbean
+
+Run: ./o/tool/net/redbean

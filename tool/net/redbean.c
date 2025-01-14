@@ -7464,7 +7464,105 @@ void RedBean(int argc, char *argv[]) {
   }
 }
 
-// Modified redbean start here
+//! Modified redbean start here
+
+// Dynamic array implementation. Will be used as list of neighbors
+typedef struct {
+  char **data;    // Pointer to the array of strings
+  size_t size;    // Current number of elements
+  size_t capacity; // Maximum capacity of the array
+} DynamicArray;
+
+// Function to initialize the dynamic array
+void init_array(DynamicArray *array, size_t initial_capacity) {
+  array->data = (char **)malloc(initial_capacity * sizeof(char *));
+  if (!array->data) {
+      perror("Failed to allocate memory");
+      exit(1);
+  }
+  array->size = 0;
+  array->capacity = initial_capacity;
+}
+
+// Function to add a string to the array
+void add_element(DynamicArray *array, const char *value) {
+  // Check if the array is full
+  if (array->size == array->capacity) {
+      // Double the capacity
+      size_t new_capacity = array->capacity * 2;
+      char **new_data = (char **)realloc(array->data, new_capacity * sizeof(char *));
+      if (!new_data) {
+          perror("Failed to reallocate memory");
+          free(array->data);
+          exit(1);
+      }
+      array->data = new_data;
+      array->capacity = new_capacity;
+  }
+  // Add the new string (allocate memory for it)
+  array->data[array->size] = strdup(value);
+  if (!array->data[array->size]) {
+      perror("Failed to duplicate string");
+      exit(1);
+  }
+  array->size++;
+}
+
+// Function to remove a string at a given index
+void remove_element(DynamicArray *array, size_t index) {
+  if (index >= array->size) {
+      fprintf(stderr, "Index out of bounds\n");
+      return;
+  }
+  // Free the string at the specified index
+  free(array->data[index]);
+
+  // Shift elements to the left
+  for (size_t i = index; i < array->size - 1; i++) {
+      array->data[i] = array->data[i + 1];
+  }
+  array->size--;
+}
+
+// Function to check if the array contains a specific string
+int contains_element(const DynamicArray *array, const char *value) {
+  for (size_t i = 0; i < array->size; i++) {
+      if (strcmp(array->data[i], value) == 0) {
+          return i; // String found, return its index
+      }
+  }
+  return -1; // String not found
+}
+
+// Function to free the array memory
+void free_array(DynamicArray *array) {
+  // Free each string in the array
+  for (size_t i = 0; i < array->size; i++) {
+      free(array->data[i]);
+  }
+  // Free the array itself
+  free(array->data);
+  array->data = NULL;
+  array->size = 0;
+    array->capacity = 0;
+}
+
+//TODO -------------
+
+// Enum for message types
+enum MSG_type {
+  PING,
+};
+
+// MSG struct
+struct MSG {
+  char* sender_ip;
+  enum MSG_type type;
+  char* data; //! Using char* for the moment, might have to change this
+};
+
+//TODO -------------
+
 void handle_client(int client_socket) {
   #define BUFFER_SIZE 1024
 
@@ -7487,9 +7585,15 @@ void handle_client(int client_socket) {
   close(client_socket);
 }
 
+//Socker Server used to locally communicate between the browser socket and the c socket
 void server_main() {
   int server_socket;
   struct sockaddr_in server_addr;
+
+  // Dynamic array containing the list of neighbours
+  DynamicArray neighbours;
+  // Initialize it with the size of 2, as it will only contain the browser socket and the c socket
+  init_array(&neighbours, 2); 
 
   // Create a socket
   server_socket = socket(AF_INET, SOCK_STREAM, 0);
@@ -7534,12 +7638,53 @@ void server_main() {
   close(server_socket);
 }
 
-//TODO REMOVE!!!!
+//Get local IPv4 address of the network interface in use
+char* get__ipv4() {
+  int sock;
+  struct sockaddr_in server_addr, local_addr;
+  uint32_t addr_len = sizeof(local_addr);
+
+  // Create a UDP socket
+  sock = socket(AF_INET, SOCK_DGRAM, 0);
+  if (sock == -1) {
+      perror("Socket creation failed");
+      exit(1);
+  }
+
+  // Configure a dummy server address (e.g., Google's DNS server)
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(53); // DNS port
+  server_addr.sin_addr.s_addr = inet_addr("8.8.8.8");
+
+  // Connect to the dummy server
+  if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
+      perror("Connect failed");
+      close(sock);
+      exit(1);
+  }
+
+  // Get the local socket name (local IP and port)
+  if (getsockname(sock, (struct sockaddr *)&local_addr, &addr_len) == -1) {
+      perror("getsockname failed");
+      close(sock);
+      exit(1);
+  }
+
+  // Convert the local IP to a string and print it
+  printf("Local IPv4 in use: %s\n", inet_ntoa(local_addr.sin_addr));
+  char *ip = inet_ntoa(local_addr.sin_addr);
+
+  // Close the socket
+  close(sock);
+  return ip;
+}
+
+//Socket Client used to communicate with other peers
 int test() {
   #define BUFFER_SIZE 1024
 
   int client_socket;
-  struct sockaddr_in server_addr;
+  struct sockaddr_in server_addr, client_addr;
   char buffer[BUFFER_SIZE];
 
   // Create a socket
@@ -7548,6 +7693,24 @@ int test() {
       perror("Socket creation failed");
       return 1;
   }
+
+  //Get IP
+  char* ip = get__ipv4();
+
+  // Configure the client address (local IP and port)
+  memset(&client_addr, 0, sizeof(client_addr));
+  client_addr.sin_family = AF_INET;
+  client_addr.sin_addr.s_addr = inet_addr(ip); // Bind to this local IP
+  client_addr.sin_port = htons(3001);         // Bind to this local port
+
+  // Bind the client socket to the specified local IP and port
+  if (bind(client_socket, (struct sockaddr *)&client_addr, sizeof(client_addr)) == -1) {
+      perror("Bind failed");
+      close(client_socket);
+      return 1;
+  }
+
+  printf("Client socket bound to %s:%d\n", ip, 3001);
 
   // Configure server address
   memset(&server_addr, 0, sizeof(server_addr)); // Zero out the structure
@@ -7584,7 +7747,6 @@ int test() {
 
   return 0;
 }
-
 
 int main(int argc, char *argv[]) {
   if (fork() == 0) {
