@@ -3995,6 +3995,8 @@ static int LuaNilTlsError(lua_State *L, const char *s, int r) {
 }
 
 #include "tool/net/fetch.inc"
+#include <regex.h>
+#include <fcntl.h>
 
 static int LuaGetDate(lua_State *L) {
   unassert(!pthread_mutex_lock(&shared->datetime_mu));
@@ -7474,17 +7476,17 @@ typedef struct {
 
 // Dynamic array for storing neighbors
 typedef struct {
-  Neighbor *data;    // Array of Neighbor structs
-  size_t size;       // Current number of elements
-  size_t capacity;   // Maximum capacity of the array
+  Neighbor *data;   // Array of Neighbor structs
+  size_t size;      // Current number of elements
+  size_t capacity;  // Maximum capacity of the array
 } DynamicArray;
 
 // Initialize the dynamic array
 void init_array(DynamicArray *array, size_t initial_capacity) {
   array->data = (Neighbor *)malloc(initial_capacity * sizeof(Neighbor));
   if (!array->data) {
-      perror("Failed to allocate memory");
-      exit(1);
+    perror("Failed to allocate memory");
+    exit(1);
   }
   array->size = 0;
   array->capacity = initial_capacity;
@@ -7493,19 +7495,20 @@ void init_array(DynamicArray *array, size_t initial_capacity) {
 // Add a Neighbor to the array
 void add_element(DynamicArray *array, const char *ip, int socket) {
   if (array->size == array->capacity) {
-      size_t new_capacity = array->capacity * 2;
-      Neighbor *new_data = (Neighbor *)realloc(array->data, new_capacity * sizeof(Neighbor));
-      if (!new_data) {
-          perror("Failed to reallocate memory");
-          free(array->data);
-          exit(1);
-      }
-      array->data = new_data;
-      array->capacity = new_capacity;
+    size_t new_capacity = array->capacity * 2;
+    Neighbor *new_data =
+        (Neighbor *)realloc(array->data, new_capacity * sizeof(Neighbor));
+    if (!new_data) {
+      perror("Failed to reallocate memory");
+      free(array->data);
+      exit(1);
+    }
+    array->data = new_data;
+    array->capacity = new_capacity;
   }
   // Copy the IP address with proper null-termination
   strncpy(array->data[array->size].ip, ip, 15);
-  array->data[array->size].ip[15] = '\0'; // Ensure null-termination
+  array->data[array->size].ip[15] = '\0';  // Ensure null-termination
   array->data[array->size].socket = socket;
   array->size++;
 }
@@ -7513,17 +7516,17 @@ void add_element(DynamicArray *array, const char *ip, int socket) {
 // Find a Neighbor in the array by IP
 int find_neighbor(const DynamicArray *array, const char *ip) {
   for (size_t i = 0; i < array->size; i++) {
-      if (strcmp(array->data[i].ip, ip) == 0) {
-          return i; // Return the index
-      }
+    if (strcmp(array->data[i].ip, ip) == 0) {
+      return i;  // Return the index
+    }
   }
-  return -1; // Not found
+  return -1;  // Not found
 }
 
 // Free the dynamic array
 void free_array(DynamicArray *array) {
   for (size_t i = 0; i < array->size; i++) {
-      close(array->data[i].socket); // Close all sockets
+    close(array->data[i].socket);  // Close all sockets
   }
   free(array->data);
   array->data = NULL;
@@ -7531,23 +7534,20 @@ void free_array(DynamicArray *array) {
   array->capacity = 0;
 }
 
-//TODO -------------
+// TODO -------------
 
 // Enum of all possible MSG types
-enum MSG_type {
-  PING,
-  PONG,
-  DATA
-};
+enum MSG_type { PING, PONG, DATA };
 
 // MSG struct
 struct MSG {
-  char *sender_ip;    // Sender's IP (e.g., "192.168.0.1")
-  enum MSG_type type; // Message type (e.g., PING)
-  char *data;         // Message data (can be empty for PING)
+  char *sender_ip;     // Sender's IP (e.g., "192.168.0.1")
+  enum MSG_type type;  // Message type (e.g., PING)
+  char *data;          // Message data (can be empty for PING)
 };
 
-// Functions used to make the struct a buffer that can be sent through a socket and recompose it
+// Functions used to make the struct a buffer that can be sent through a socket
+// and recompose it
 
 // Serialize the MSG struct into a binary buffer
 void serialize_msg(const struct MSG *msg, char *buffer) {
@@ -7559,18 +7559,19 @@ void serialize_msg(const struct MSG *msg, char *buffer) {
   memcpy(buffer + 16, &type_network_order, sizeof(int));
 
   // Copy data (assuming it is dynamically allocated)
-  memcpy(buffer + 20, msg->data, 256);  // Ensure msg->data is a null-terminated string of at least 256 bytes
+  memcpy(buffer + 20, msg->data, 256);  // Ensure msg->data is a null-terminated
+                                        // string of at least 256 bytes
 }
 
 // Deserialize a binary buffer into an MSG struct
 void deserialize_msg(const char *buffer, struct MSG *msg) {
   // Allocate memory for sender_ip and data if needed
   msg->sender_ip = (char *)malloc(16 * sizeof(char));  // Allocate space for IP
-  msg->data = (char *)malloc(256 * sizeof(char));      // Allocate space for data
+  msg->data = (char *)malloc(256 * sizeof(char));  // Allocate space for data
 
   // Copy sender_ip and ensure null-termination
   memcpy(msg->sender_ip, buffer, 16);
-  msg->sender_ip[15] = '\0'; // Ensure null-termination for safety
+  msg->sender_ip[15] = '\0';  // Ensure null-termination for safety
 
   // Extract type and convert to host byte order
   int type_network_order;
@@ -7579,10 +7580,225 @@ void deserialize_msg(const char *buffer, struct MSG *msg) {
 
   // Copy data and ensure null-termination
   memcpy(msg->data, buffer + 20, 256);
-  msg->data[255] = '\0'; // Ensure null-termination for safety
+  msg->data[255] = '\0';  // Ensure null-termination for safety
 }
 
-//TODO -------------
+// TODO -------------
+
+const char *get_file_extension(const char *file_name) {
+    const char *dot = strrchr(file_name, '.');
+    if (!dot || dot == file_name) {
+        return "";
+    }
+    return dot + 1;
+}
+
+const char *get_mime_type(const char *file_ext) {
+    if (strcasecmp(file_ext, "html") == 0 || strcasecmp(file_ext, "htm") == 0) {
+        return "text/html";
+    } else if (strcasecmp(file_ext, "txt") == 0) {
+        return "text/plain";
+    } else if (strcasecmp(file_ext, "jpg") == 0 || strcasecmp(file_ext, "jpeg") == 0) {
+        return "image/jpeg";
+    } else if (strcasecmp(file_ext, "png") == 0) {
+        return "image/png";
+    } else {
+        return "application/octet-stream";
+    }
+}
+
+bool case_insensitive_compare(const char *s1, const char *s2) {
+    while (*s1 && *s2) {
+        if (tolower((unsigned char)*s1) != tolower((unsigned char)*s2)) {
+            return false;
+        }
+        s1++;
+        s2++;
+    }
+    return *s1 == *s2;
+}
+
+char *get_file_case_insensitive(const char *file_name) {
+    DIR *dir = opendir(".");
+    if (dir == NULL) {
+        perror("opendir");
+        return NULL;
+    }
+
+    struct dirent *entry;
+    char *found_file_name = NULL;
+    while ((entry = readdir(dir)) != NULL) {
+        if (case_insensitive_compare(entry->d_name, file_name)) {
+            found_file_name = entry->d_name;
+            break;
+        }
+    }
+
+    closedir(dir);
+    return found_file_name;
+}
+
+char *url_decode(const char *src) {
+    size_t src_len = strlen(src);
+    char *decoded = malloc(src_len + 1);
+    size_t decoded_len = 0;
+
+    // decode %2x to hex
+    for (size_t i = 0; i < src_len; i++) {
+        if (src[i] == '%' && i + 2 < src_len) {
+            int hex_val;
+            sscanf(src + i + 1, "%2x", &hex_val);
+            decoded[decoded_len++] = hex_val;
+            i += 2;
+        } else {
+            decoded[decoded_len++] = src[i];
+        }
+    }
+
+    // add null terminator
+    decoded[decoded_len] = '\0';
+    return decoded;
+}
+
+void build_http_response(const char *file_name, 
+                        const char *file_ext, 
+                        char *response, 
+                        size_t *response_len) {
+    // build HTTP header
+    const char *mime_type = get_mime_type(file_ext);
+    char *header = (char *)malloc(104857600 * sizeof(char));
+    snprintf(header, 104857600,
+              "HTTP/1.1 200 OK\r\n"
+              "Content-Type: %s\r\n"
+              "\r\n",
+              mime_type);
+
+    // if file not exist, response is 404 Not Found
+    int file_fd = open(file_name, O_RDONLY);
+    if (file_fd == -1) {
+        snprintf(response, 104857600,
+                  "HTTP/1.1 404 Not Found\r\n"
+                  "Content-Type: text/plain\r\n"
+                  "\r\n"
+                  "404 Not Found");
+        *response_len = strlen(response);
+        return;
+    }
+
+    // get file size for Content-Length
+    struct stat file_stat;
+    fstat(file_fd, &file_stat);
+    off_t file_size = file_stat.st_size;
+
+    // copy header to response buffer
+    *response_len = 0;
+    memcpy(response, header, strlen(header));
+    *response_len += strlen(header);
+
+    // copy file to response buffer
+    ssize_t bytes_read;
+    while ((bytes_read = read(file_fd, 
+                            response + *response_len, 
+                            104857600 - *response_len)) > 0) {
+        *response_len += bytes_read;
+    }
+    free(header);
+    close(file_fd);
+}
+
+void *handle_client(void *arg) {
+    int client_fd = *((int *)arg);
+    char *buffer = (char *)malloc(104857600 * sizeof(char));
+
+    // receive request data from client and store into buffer
+    ssize_t bytes_received = recv(client_fd, buffer, 104857600, 0);
+    if (bytes_received > 0) {
+        // check if request is GET
+        regex_t regex;
+        regcomp(&regex, "^GET /([^ ]*) HTTP/1", REG_EXTENDED);
+        regmatch_t matches[2];
+
+        if (regexec(&regex, buffer, 2, matches, 0) == 0) {
+            // extract filename from request and decode URL
+            buffer[matches[1].rm_eo] = '\0';
+            const char *url_encoded_file_name = buffer + matches[1].rm_so;
+            char *file_name = url_decode(url_encoded_file_name);
+
+            // get file extension
+            char file_ext[32];
+            strcpy(file_ext, get_file_extension(file_name));
+
+            // build HTTP response
+            char *response = (char *)malloc(104857600 * 2 * sizeof(char));
+            size_t response_len;
+            build_http_response(file_name, file_ext, response, &response_len);
+
+            // send HTTP response to client
+            send(client_fd, response, response_len, 0);
+
+            free(response);
+            free(file_name);
+        }
+        regfree(&regex);
+    }
+    close(client_fd);
+    free(arg);
+    free(buffer);
+    return NULL;
+}
+
+int server_main2() {
+    int server_fd;
+    struct sockaddr_in server_addr;
+
+    // create server socket
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // config socket
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    server_addr.sin_port = htons(3000);
+
+    // bind socket to port
+    if (bind(server_fd, 
+            (struct sockaddr *)&server_addr, 
+            sizeof(server_addr)) < 0) {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // listen for connections
+    if (listen(server_fd, 10) < 0) {
+        perror("listen failed");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Server listening on port %s:%d\n", "127.0.0.1", 3000);
+    while (1) {
+        // client info
+        struct sockaddr_in client_addr;
+        uint32_t client_addr_len = sizeof(client_addr);
+        int *client_fd = malloc(sizeof(int));
+
+        // accept client connection
+        if ((*client_fd = accept(server_fd, 
+                                (struct sockaddr *)&client_addr, 
+                                &client_addr_len)) < 0) {
+            perror("accept failed");
+            continue;
+        }
+
+        // create a new thread to handle client request
+        pthread_t thread_id;
+        pthread_create(&thread_id, NULL, handle_client, (void *)client_fd);
+        pthread_detach(thread_id);
+    }
+
+    close(server_fd);
+}
 
 // TCP Socket Server
 void server_main() {
@@ -7590,7 +7806,7 @@ void server_main() {
   struct sockaddr_in server_addr, client_addr;
   uint32_t addr_len = sizeof(client_addr);
   DynamicArray neighbors;
-  char buffer[512]; // Buffer for serialized MSG
+  char buffer[512];  // Buffer for serialized MSG
   struct MSG msg;
 
   // Initialize the neighbors array
@@ -7599,8 +7815,8 @@ void server_main() {
   // Create a TCP socket
   server_socket = socket(AF_INET, SOCK_STREAM, 0);
   if (server_socket == -1) {
-      perror("Socket creation failed");
-      exit(EXIT_FAILURE);
+    perror("Socket creation failed");
+    exit(EXIT_FAILURE);
   }
 
   // Configure the server address
@@ -7609,85 +7825,90 @@ void server_main() {
   server_addr.sin_port = htons(3000);
 
   // Bind the socket to the address and port
-  if (bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
-      perror("Bind failed");
-      close(server_socket);
-      exit(EXIT_FAILURE);
+  if (bind(server_socket, (struct sockaddr *)&server_addr,
+          sizeof(server_addr)) == -1) {
+    perror("Bind failed");
+    close(server_socket);
+    exit(EXIT_FAILURE);
   }
 
   // Start listening for incoming connections
   if (listen(server_socket, 5) == -1) {
-      perror("Listen failed");
-      close(server_socket);
-      exit(EXIT_FAILURE);
+    perror("Listen failed");
+    close(server_socket);
+    exit(EXIT_FAILURE);
   }
 
   printf("TCP server running on 127.0.0.1:3000\n");
 
   // Main loop: accept and handle clients
   while (1) {
-      int client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &addr_len);
-      if (client_socket == -1) {
-          perror("Accept failed");
-          continue;
+    int client_socket =
+        accept(server_socket, (struct sockaddr *)&client_addr, &addr_len);
+    if (client_socket == -1) {
+      perror("Accept failed");
+      continue;
+    }
+
+    // Receive a message from the client
+    int bytes_received = recv(client_socket, buffer, sizeof(buffer), 0);
+    if (bytes_received > 0) {
+      deserialize_msg(buffer, &msg);
+
+      printf("Received message from %s: Type=%d, Data=%s\n", msg.sender_ip,
+            msg.type, msg.data);
+
+      // If the server receives a PING, adds it to the neighbors and answers
+      // with PONG
+      if (msg.type == PING) {
+        // Add to neighbors
+        if (find_neighbor(&neighbors, msg.sender_ip) == -1) {
+          add_element(&neighbors, msg.sender_ip, client_socket);
+          printf("Added neighbor: %s\n", msg.sender_ip);
+        } else {
+          printf("Neighbor %s already exists\n", msg.sender_ip);
+        }
+
+        // Answer with PONG
+        struct MSG pong;
+        pong.sender_ip = strdup("127.0.0.1");
+        pong.type = PONG;
+        pong.data = strdup("PONG");
+
+        // Serialize the message before sending it
+        char msg_buffer[512];
+        serialize_msg(&pong, msg_buffer);
+
+        // Get sender socket
+        int sender_index = find_neighbor(&neighbors, msg.sender_ip);
+        int sender_socket = neighbors.data[sender_index].socket;
+
+        // Send the PONG response to the client
+        if (send(sender_socket, msg_buffer, sizeof(msg_buffer), 0) == -1) {
+          perror("Send PONG failed");
+        } else {
+          printf("Sent PONG to client: %s\n", msg.sender_ip);
+        }
+
+      } else {
+        // Othwerwise, it relays the message from the browser socket to the
+        // redbean one or viceversa
+        int receiver_index = 0;
+        if (find_neighbor(&neighbors, msg.sender_ip) == 0) {
+          receiver_index = 1;
+        }
+
+        int receiver_socket = neighbors.data[receiver_index].socket;
+
+        // Send the message to the other socket. We can use the old buffer, as
+        // it still contains the old message
+        if (send(receiver_socket, buffer, sizeof(buffer), 0) == -1) {
+          perror("Send failed");
+        } else {
+          printf("Sent PING to server\n");
+        }
       }
-
-      // Receive a message from the client
-      int bytes_received = recv(client_socket, buffer, sizeof(buffer), 0);
-      if (bytes_received > 0) {
-          deserialize_msg(buffer, &msg);
-
-          printf("Received message from %s: Type=%d, Data=%s\n",
-                  msg.sender_ip, msg.type, msg.data);
-
-          // If the server receives a PING, adds it to the neighbors and answers with PONG
-          if (msg.type == PING) {
-            // Add to neighbors
-            if (find_neighbor(&neighbors, msg.sender_ip) == -1) {
-              add_element(&neighbors, msg.sender_ip, client_socket);
-              printf("Added neighbor: %s\n", msg.sender_ip);
-            } else {
-              printf("Neighbor %s already exists\n", msg.sender_ip);
-            }
-
-            // Answer with PONG
-            struct MSG pong;
-            pong.sender_ip = strdup("127.0.0.1");
-            pong.type = PONG;
-            pong.data = strdup("PONG");
-
-            // Serialize the message before sending it
-            char msg_buffer[512];
-            serialize_msg(&pong, msg_buffer);
-
-            // Get sender socket
-            int sender_index = find_neighbor(&neighbors, msg.sender_ip);
-            int sender_socket = neighbors.data[sender_index].socket;
-            
-            // Send the PONG response to the client
-            if (send(sender_socket, msg_buffer, sizeof(msg_buffer), 0) == -1) {
-                perror("Send PONG failed");
-            } else {
-                printf("Sent PONG to client: %s\n", msg.sender_ip);
-            }
-
-          } else {
-            // Othwerwise, it relays the message from the browser socket to the redbean one or viceversa
-            int receiver_index = 0;
-            if (find_neighbor(&neighbors, msg.sender_ip) == 0) {
-              receiver_index = 1;
-            }
-
-            int receiver_socket = neighbors.data[receiver_index].socket;
-            
-            // Send the message to the other socket. We can use the old buffer, as it still contains the old message
-            if (send(receiver_socket, buffer, sizeof(buffer), 0) == -1) {
-                perror("Send failed");
-            } else {
-                printf("Sent PING to server\n");
-            }
-          }
-      }
+    }
   }
 
   // Clean up
@@ -7699,57 +7920,59 @@ void server_main() {
 void client_main() {
   int client_socket;
   struct sockaddr_in server_addr;
-  struct MSG msg;
-  char buffer[512]; // Buffer for serialized MSG
+  char buffer[512];
+  const char *message = "Hello, WebSocket server!";
 
   // Create a TCP socket
   client_socket = socket(AF_INET, SOCK_STREAM, 0);
   if (client_socket == -1) {
-      perror("Socket creation failed");
-      exit(EXIT_FAILURE);
+    perror("Socket creation failed");
+    exit(EXIT_FAILURE);
   }
 
   // Configure the server address
   server_addr.sin_family = AF_INET;
-  server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
   server_addr.sin_port = htons(3000);
+  server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
   // Connect to the server
-  if (connect(client_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
-      perror("Connection to the server failed");
-      close(client_socket);
-      exit(EXIT_FAILURE);
+  if (connect(client_socket, (struct sockaddr *)&server_addr,
+              sizeof(server_addr)) == -1) {
+    perror("Connection to server failed");
+    close(client_socket);
+    exit(EXIT_FAILURE);
   }
 
-  printf("Connected to the server\n");
+  // Send a message to the server
+  if (send(client_socket, message, strlen(message), 0) == -1) {
+    perror("Failed to send message");
+    close(client_socket);
+    exit(EXIT_FAILURE);
+  }
+  printf("Sent message: %s\n", message);
 
-  // Prepare a PING message
-  msg.sender_ip = strdup("localhost");
-  msg.type = PING;
-  msg.data = strdup("PING");
-
-  // Serialize the message
-  serialize_msg(&msg, buffer);
-
-  // Send the message to the server
-  if (send(client_socket, buffer, sizeof(buffer), 0) == -1) {
-      perror("Send failed");
+  // Receive a response from the server
+  ssize_t bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+  if (bytes_received > 0) {
+    buffer[bytes_received] = '\0';  // Null-terminate the received data
+    printf("Received response: %s\n", buffer);
   } else {
-      printf("Sent PING to server\n");
+    printf("No response received or connection closed by the server.\n");
   }
 
   // Close the connection
   close(client_socket);
+  printf("Connection closed.\n");
 }
 
 int main(int argc, char *argv[]) {
   if (fork() == 0) {
-    server_main();
+    server_main2();
     exit(0);
   }
   if (fork() == 0) {
     sleep(1);
-    client_main();
+    //client_main();
     exit(0);
   }
   //! End here
