@@ -1,0 +1,13 @@
+ INFO: nweb starting:3000:11056
+ INFO: request:OPTIONS / HTTP/1.1**Host: 127.0.0.1:3000**User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0**Accept: */***Accept-Language: en-US,en;q=0.5**Accept-Encoding: gzip, deflate, br, zstd**Access-Control-Request-Method: POST**Access-Control-Request-Headers: content-type**Referer: http://127.0.0.1:8080/**Origin: http://127.0.0.1:8080**Connection: keep-alive**Sec-Fetch-Dest: empty**Sec-Fetch-Mode: cors**Sec-Fetch-Site: same-site**Priority: u=4****:1
+FORBIDDEN: Only simple GET operation supported:OPTIONS / HTTP/1.1**Host: 127.0.0.1:3000**User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0**Accept: */***Accept-Language: en-US,en;q=0.5**Accept-Encoding: gzip, deflate, br, zstd**Access-Control-Request-Method: POST**Access-Control-Request-Headers: content-type**Referer: http://127.0.0.1:8080/**Origin: http://127.0.0.1:8080**Connection: keep-alive**Sec-Fetch-Dest: empty**Sec-Fetch-Mode: cors**Sec-Fetch-Site: same-site**Priority: u=4****
+ INFO: nweb starting:3000:11637
+ INFO: nweb starting:3000:12766
+ INFO: request:OPTIONS / HTTP/1.1**Host: 127.0.0.1:3000**User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0**Accept: */***Accept-Language: en-US,en;q=0.5**Accept-Encoding: gzip, deflate, br, zstd**Access-Control-Request-Method: POST**Access-Control-Request-Headers: content-type**Referer: http://127.0.0.1:8080/**Origin: http://127.0.0.1:8080**Connection: keep-alive**Sec-Fetch-Dest: empty**Sec-Fetch-Mode: cors**Sec-Fetch-Site: same-site**Priority: u=4****:1
+FORBIDDEN: Only simple POST operation supported:OPTIONS / HTTP/1.1**Host: 127.0.0.1:3000**User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0**Accept: */***Accept-Language: en-US,en;q=0.5**Accept-Encoding: gzip, deflate, br, zstd**Access-Control-Request-Method: POST**Access-Control-Request-Headers: content-type**Referer: http://127.0.0.1:8080/**Origin: http://127.0.0.1:8080**Connection: keep-alive**Sec-Fetch-Dest: empty**Sec-Fetch-Mode: cors**Sec-Fetch-Site: same-site**Priority: u=4****
+ INFO: nweb starting:3000:13609
+ INFO: nweb starting:3000:14915
+ INFO: nweb starting:3000:16183
+ INFO: nweb starting:3000:16930
+ INFO: nweb starting:3000:17622
+ INFO: nweb starting:3000:18417

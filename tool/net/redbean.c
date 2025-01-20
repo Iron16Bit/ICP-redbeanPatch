@@ -420,6 +420,8 @@ struct ClearedPerMessage {
   struct HttpMessage msg;
 } cpm;
 
+void inject();
+
 static bool suiteb;
 static bool killed;
 static bool zombied;
@@ -2988,7 +2990,7 @@ static void LaunchBrowser(const char *path) {
 
 static char *BadMethod(void) {
   LockInc(&shared->c.badmethods);
-  return stpcpy(ServeError(405, "Method Not Allowed"), "Allow: GET, HEAD\r\n");
+  return stpcpy(ServeError(405, "Method Not Allowed"), "Allow: GET, HEAD, POST\r\n");
 }
 
 static int GetDecimalWidth(long x) {
@@ -3994,9 +3996,9 @@ static int LuaNilTlsError(lua_State *L, const char *s, int r) {
                      gc(xasprintf("-0x%04x", -r)));
 }
 
-#include "tool/net/fetch.inc"
-#include <regex.h>
 #include <fcntl.h>
+#include <regex.h>
+#include "tool/net/fetch.inc"
 
 static int LuaGetDate(lua_State *L) {
   unassert(!pthread_mutex_lock(&shared->datetime_mu));
@@ -6041,6 +6043,7 @@ static char *SynchronizeStream(void) {
       return HandleBadContentLength();
     }
   } else if (cpm.msg.method == kHttpPost || cpm.msg.method == kHttpPut) {
+    printf("AIUTOOOOOO\n");
     return HandleLengthRequired();
   } else {
     cpm.msgsize = hdrsize;
@@ -6261,6 +6264,10 @@ static char *HandleAsset(struct Asset *a, const char *path, size_t pathlen) {
     if (!cpm.gotxcontenttypeoptions) {
       p = stpcpy(p, "X-Content-Type-Options: nosniff\r\n");
     }
+    return p;
+  } else if (cpm.msg.method == kHttpPost) {
+    inject();
+    p = SetStatus(200, "OK");
     return p;
   } else {
     return BadMethod();
@@ -7585,221 +7592,6 @@ void deserialize_msg(const char *buffer, struct MSG *msg) {
 
 // TODO -------------
 
-const char *get_file_extension(const char *file_name) {
-    const char *dot = strrchr(file_name, '.');
-    if (!dot || dot == file_name) {
-        return "";
-    }
-    return dot + 1;
-}
-
-const char *get_mime_type(const char *file_ext) {
-    if (strcasecmp(file_ext, "html") == 0 || strcasecmp(file_ext, "htm") == 0) {
-        return "text/html";
-    } else if (strcasecmp(file_ext, "txt") == 0) {
-        return "text/plain";
-    } else if (strcasecmp(file_ext, "jpg") == 0 || strcasecmp(file_ext, "jpeg") == 0) {
-        return "image/jpeg";
-    } else if (strcasecmp(file_ext, "png") == 0) {
-        return "image/png";
-    } else {
-        return "application/octet-stream";
-    }
-}
-
-bool case_insensitive_compare(const char *s1, const char *s2) {
-    while (*s1 && *s2) {
-        if (tolower((unsigned char)*s1) != tolower((unsigned char)*s2)) {
-            return false;
-        }
-        s1++;
-        s2++;
-    }
-    return *s1 == *s2;
-}
-
-char *get_file_case_insensitive(const char *file_name) {
-    DIR *dir = opendir(".");
-    if (dir == NULL) {
-        perror("opendir");
-        return NULL;
-    }
-
-    struct dirent *entry;
-    char *found_file_name = NULL;
-    while ((entry = readdir(dir)) != NULL) {
-        if (case_insensitive_compare(entry->d_name, file_name)) {
-            found_file_name = entry->d_name;
-            break;
-        }
-    }
-
-    closedir(dir);
-    return found_file_name;
-}
-
-char *url_decode(const char *src) {
-    size_t src_len = strlen(src);
-    char *decoded = malloc(src_len + 1);
-    size_t decoded_len = 0;
-
-    // decode %2x to hex
-    for (size_t i = 0; i < src_len; i++) {
-        if (src[i] == '%' && i + 2 < src_len) {
-            int hex_val;
-            sscanf(src + i + 1, "%2x", &hex_val);
-            decoded[decoded_len++] = hex_val;
-            i += 2;
-        } else {
-            decoded[decoded_len++] = src[i];
-        }
-    }
-
-    // add null terminator
-    decoded[decoded_len] = '\0';
-    return decoded;
-}
-
-void build_http_response(const char *file_name, 
-                        const char *file_ext, 
-                        char *response, 
-                        size_t *response_len) {
-    // build HTTP header
-    const char *mime_type = get_mime_type(file_ext);
-    char *header = (char *)malloc(104857600 * sizeof(char));
-    snprintf(header, 104857600,
-              "HTTP/1.1 200 OK\r\n"
-              "Content-Type: %s\r\n"
-              "\r\n",
-              mime_type);
-
-    // if file not exist, response is 404 Not Found
-    int file_fd = open(file_name, O_RDONLY);
-    if (file_fd == -1) {
-        snprintf(response, 104857600,
-                  "HTTP/1.1 404 Not Found\r\n"
-                  "Content-Type: text/plain\r\n"
-                  "\r\n"
-                  "404 Not Found");
-        *response_len = strlen(response);
-        return;
-    }
-
-    // get file size for Content-Length
-    struct stat file_stat;
-    fstat(file_fd, &file_stat);
-    off_t file_size = file_stat.st_size;
-
-    // copy header to response buffer
-    *response_len = 0;
-    memcpy(response, header, strlen(header));
-    *response_len += strlen(header);
-
-    // copy file to response buffer
-    ssize_t bytes_read;
-    while ((bytes_read = read(file_fd, 
-                            response + *response_len, 
-                            104857600 - *response_len)) > 0) {
-        *response_len += bytes_read;
-    }
-    free(header);
-    close(file_fd);
-}
-
-void *handle_client(void *arg) {
-    int client_fd = *((int *)arg);
-    char *buffer = (char *)malloc(104857600 * sizeof(char));
-
-    // receive request data from client and store into buffer
-    ssize_t bytes_received = recv(client_fd, buffer, 104857600, 0);
-    if (bytes_received > 0) {
-        // check if request is GET
-        regex_t regex;
-        regcomp(&regex, "^GET /([^ ]*) HTTP/1", REG_EXTENDED);
-        regmatch_t matches[2];
-
-        if (regexec(&regex, buffer, 2, matches, 0) == 0) {
-            // extract filename from request and decode URL
-            buffer[matches[1].rm_eo] = '\0';
-            const char *url_encoded_file_name = buffer + matches[1].rm_so;
-            char *file_name = url_decode(url_encoded_file_name);
-
-            // get file extension
-            char file_ext[32];
-            strcpy(file_ext, get_file_extension(file_name));
-
-            // build HTTP response
-            char *response = (char *)malloc(104857600 * 2 * sizeof(char));
-            size_t response_len;
-            build_http_response(file_name, file_ext, response, &response_len);
-
-            // send HTTP response to client
-            send(client_fd, response, response_len, 0);
-
-            free(response);
-            free(file_name);
-        }
-        regfree(&regex);
-    }
-    close(client_fd);
-    free(arg);
-    free(buffer);
-    return NULL;
-}
-
-int server_main2() {
-    int server_fd;
-    struct sockaddr_in server_addr;
-
-    // create server socket
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("socket failed");
-        exit(EXIT_FAILURE);
-    }
-
-    // config socket
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    server_addr.sin_port = htons(3000);
-
-    // bind socket to port
-    if (bind(server_fd, 
-            (struct sockaddr *)&server_addr, 
-            sizeof(server_addr)) < 0) {
-        perror("bind failed");
-        exit(EXIT_FAILURE);
-    }
-
-    // listen for connections
-    if (listen(server_fd, 10) < 0) {
-        perror("listen failed");
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Server listening on port %s:%d\n", "127.0.0.1", 3000);
-    while (1) {
-        // client info
-        struct sockaddr_in client_addr;
-        uint32_t client_addr_len = sizeof(client_addr);
-        int *client_fd = malloc(sizeof(int));
-
-        // accept client connection
-        if ((*client_fd = accept(server_fd, 
-                                (struct sockaddr *)&client_addr, 
-                                &client_addr_len)) < 0) {
-            perror("accept failed");
-            continue;
-        }
-
-        // create a new thread to handle client request
-        pthread_t thread_id;
-        pthread_create(&thread_id, NULL, handle_client, (void *)client_fd);
-        pthread_detach(thread_id);
-    }
-
-    close(server_fd);
-}
-
 // TCP Socket Server
 void server_main() {
   int server_socket;
@@ -7826,7 +7618,7 @@ void server_main() {
 
   // Bind the socket to the address and port
   if (bind(server_socket, (struct sockaddr *)&server_addr,
-          sizeof(server_addr)) == -1) {
+           sizeof(server_addr)) == -1) {
     perror("Bind failed");
     close(server_socket);
     exit(EXIT_FAILURE);
@@ -7856,7 +7648,7 @@ void server_main() {
       deserialize_msg(buffer, &msg);
 
       printf("Received message from %s: Type=%d, Data=%s\n", msg.sender_ip,
-            msg.type, msg.data);
+             msg.type, msg.data);
 
       // If the server receives a PING, adds it to the neighbors and answers
       // with PONG
@@ -7965,14 +7757,38 @@ void client_main() {
   printf("Connection closed.\n");
 }
 
+void inject() {
+  // Parse message in inbuf.p
+  ParseHttpMessage(&cpm.msg, inbuf.p, amtread, inbuf.n);
+  
+  // Extract the text field
+  const char *key = "text: ";
+  const char *start = strstr(inbuf.p, key);
+  if (start) {
+      start += strlen(key); // Move past "text: "
+      const char *end = strstr(start, "\n");
+      if (end) {
+          size_t length = end - start;
+          char value[256] = {0}; // Buffer to store the extracted text
+          memcpy(value, start, length);
+          value[length] = '\0'; // Null-terminate the string
+          printf("Extracted text: %s\n", value);
+      } else {
+          printf("Error: End of text field not found.\n");
+      }
+  } else {
+      printf("Error: 'text' field not found.\n");
+  }
+}
+
 int main(int argc, char *argv[]) {
   if (fork() == 0) {
-    server_main2();
+    //server_main3();
     exit(0);
   }
   if (fork() == 0) {
     sleep(1);
-    //client_main();
+    // client_main();
     exit(0);
   }
   //! End here

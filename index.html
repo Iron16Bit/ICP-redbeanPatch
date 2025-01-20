@@ -7,29 +7,22 @@
 </head>
 <body>
     <h1>HTTP Client</h1>
-    <p id="status">Status: Ready</p>
-    <button id="send-btn">Connect WS</button>
-    <p id="log"></p>
+    <button id="send-btn">Send POST</button>
 
     <script>
         document.getElementById("send-btn").addEventListener("click", async () => {
-            try {
-                // Create WebSocket connection.
-                const socket = new WebSocket("ws://localhost:8080");
+            const url = "http://127.0.0.1:8080";
 
-                // Connection opened
-                socket.addEventListener("open", (event) => {
-                    socket.send("Hello Server!");
-                });
-
-                // Listen for messages
-                socket.addEventListener("message", (event) => {
-                    console.log("Message from server ", event.data);
-                });
-            } catch (error) {
-                console.error("WebSocket server connection failed:", error);
-                document.getElementById("log").textContent = `Error: ${error.message}`;
-            }
+            fetch(url, {
+                method: "POST",
+                body: JSON.stringify({
+                    text: "Hello, world!"
+                }),
+                headers: {
+                    "Content-type": "application/json; charset=UTF-8",
+                    "text": "Hello, world!"
+                }
+            });
         });
     </script>
 </body>
