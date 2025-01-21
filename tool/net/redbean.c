@@ -3999,6 +3999,7 @@ static int LuaNilTlsError(lua_State *L, const char *s, int r) {
 #include <fcntl.h>
 #include <regex.h>
 #include "tool/net/fetch.inc"
+#include <sys/socket.h>
 
 static int LuaGetDate(lua_State *L) {
   unassert(!pthread_mutex_lock(&shared->datetime_mu));
@@ -7592,120 +7593,86 @@ void deserialize_msg(const char *buffer, struct MSG *msg) {
 
 // TODO -------------
 
-// TCP Socket Server
-void server_main() {
-  int server_socket;
+#define PORT 3000
+#define BACKLOG 10
+#define RESPONSE_HEADER "HTTP/1.1 200 OK\r\n" \
+                        "Content-Type: text/event-stream\r\n" \
+                        "Cache-Control: no-cache\r\n" \
+                        "Connection: keep-alive\r\n" \
+                        "Access-Control-Allow-Origin: *\r\n" \
+                        "\r\n"
+#define SSE_DATA_PREFIX "data: "
+
+void send_event(int client_fd, const char *message) {
+  // Construct the SSE message
+  char buffer[1024];
+  snprintf(buffer, sizeof(buffer), "%s%s\n\n", SSE_DATA_PREFIX, message);
+
+  // Send the message to the client
+  send(client_fd, buffer, strlen(buffer), 0);
+}
+
+int server_main() {
+  int server_fd, client_fd;
   struct sockaddr_in server_addr, client_addr;
-  uint32_t addr_len = sizeof(client_addr);
-  DynamicArray neighbors;
-  char buffer[512];  // Buffer for serialized MSG
-  struct MSG msg;
+  socklen_t client_len = sizeof(client_addr);
+  char client_ip[INET_ADDRSTRLEN];
 
-  // Initialize the neighbors array
-  init_array(&neighbors, 2);
-
-  // Create a TCP socket
-  server_socket = socket(AF_INET, SOCK_STREAM, 0);
-  if (server_socket == -1) {
-    perror("Socket creation failed");
-    exit(EXIT_FAILURE);
+  // Create a socket
+  if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+    perror("socket");
+    return 1;
   }
 
   // Configure the server address
   server_addr.sin_family = AF_INET;
-  server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-  server_addr.sin_port = htons(3000);
+  server_addr.sin_port = htons(PORT);
+  server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-  // Bind the socket to the address and port
-  if (bind(server_socket, (struct sockaddr *)&server_addr,
-           sizeof(server_addr)) == -1) {
-    perror("Bind failed");
-    close(server_socket);
-    exit(EXIT_FAILURE);
+  // Bind the socket to the port
+  if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
+    perror("bind");
+    close(server_fd);
+    return 1;
   }
 
   // Start listening for incoming connections
-  if (listen(server_socket, 5) == -1) {
-    perror("Listen failed");
-    close(server_socket);
-    exit(EXIT_FAILURE);
+  if (listen(server_fd, BACKLOG) == -1) {
+    perror("listen");
+    close(server_fd);
+    return 1;
   }
 
-  printf("TCP server running on 127.0.0.1:3000\n");
+  printf("SSE server is running on port %d...\n", PORT);
 
-  // Main loop: accept and handle clients
   while (1) {
-    int client_socket =
-        accept(server_socket, (struct sockaddr *)&client_addr, &addr_len);
-    if (client_socket == -1) {
-      perror("Accept failed");
+    // Accept a new client connection
+    if ((client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len)) == -1) {
+      perror("accept");
       continue;
     }
 
-    // Receive a message from the client
-    int bytes_received = recv(client_socket, buffer, sizeof(buffer), 0);
-    if (bytes_received > 0) {
-      deserialize_msg(buffer, &msg);
+    // Get the client's IP address
+    inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
+    printf("New connection from %s\n", client_ip);
 
-      printf("Received message from %s: Type=%d, Data=%s\n", msg.sender_ip,
-             msg.type, msg.data);
+    // Send the initial HTTP response headers
+    send(client_fd, RESPONSE_HEADER, strlen(RESPONSE_HEADER), 0);
 
-      // If the server receives a PING, adds it to the neighbors and answers
-      // with PONG
-      if (msg.type == PING) {
-        // Add to neighbors
-        if (find_neighbor(&neighbors, msg.sender_ip) == -1) {
-          add_element(&neighbors, msg.sender_ip, client_socket);
-          printf("Added neighbor: %s\n", msg.sender_ip);
-        } else {
-          printf("Neighbor %s already exists\n", msg.sender_ip);
-        }
-
-        // Answer with PONG
-        struct MSG pong;
-        pong.sender_ip = strdup("127.0.0.1");
-        pong.type = PONG;
-        pong.data = strdup("PONG");
-
-        // Serialize the message before sending it
-        char msg_buffer[512];
-        serialize_msg(&pong, msg_buffer);
-
-        // Get sender socket
-        int sender_index = find_neighbor(&neighbors, msg.sender_ip);
-        int sender_socket = neighbors.data[sender_index].socket;
-
-        // Send the PONG response to the client
-        if (send(sender_socket, msg_buffer, sizeof(msg_buffer), 0) == -1) {
-          perror("Send PONG failed");
-        } else {
-          printf("Sent PONG to client: %s\n", msg.sender_ip);
-        }
-
-      } else {
-        // Othwerwise, it relays the message from the browser socket to the
-        // redbean one or viceversa
-        int receiver_index = 0;
-        if (find_neighbor(&neighbors, msg.sender_ip) == 0) {
-          receiver_index = 1;
-        }
-
-        int receiver_socket = neighbors.data[receiver_index].socket;
-
-        // Send the message to the other socket. We can use the old buffer, as
-        // it still contains the old message
-        if (send(receiver_socket, buffer, sizeof(buffer), 0) == -1) {
-          perror("Send failed");
-        } else {
-          printf("Sent PING to server\n");
-        }
-      }
+    // Stream events to the client
+    for (int i = 0; i < 5; i++) { // Example: Send 5 events
+        send_event(client_fd, "Hello from Cosmopolitan!");
+        sleep(1); // Wait 1 second between messages
     }
+
+    // Close the connection after sending events
+    shutdown(client_fd, SHUT_RDWR);
+    close(client_fd);
   }
 
-  // Clean up
-  free_array(&neighbors);
-  close(server_socket);
+  // Close the server socket
+  close(server_fd);
+  return 0;
 }
 
 // TCP Client Socket
@@ -7757,6 +7724,9 @@ void client_main() {
   printf("Connection closed.\n");
 }
 
+
+// inject is just a funny name at the moment
+// Used to take advantage of redbean's HTTP server by having a custom handler for POST requests that would have been discarded
 void inject() {
   // Parse message in inbuf.p
   ParseHttpMessage(&cpm.msg, inbuf.p, amtread, inbuf.n);
@@ -7769,7 +7739,7 @@ void inject() {
       const char *end = strstr(start, "\n");
       if (end) {
           size_t length = end - start;
-          char value[256] = {0}; // Buffer to store the extracted text
+          char value[1024] = {0}; // Buffer to store the extracted text
           memcpy(value, start, length);
           value[length] = '\0'; // Null-terminate the string
           printf("Extracted text: %s\n", value);
@@ -7783,7 +7753,7 @@ void inject() {
 
 int main(int argc, char *argv[]) {
   if (fork() == 0) {
-    //server_main3();
+    server_main();
     exit(0);
   }
   if (fork() == 0) {

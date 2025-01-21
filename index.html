@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HTTP Client</title>
+    <script src="communicator_api.js"></script>
 </head>
 <body>
     <h1>HTTP Client</h1>
@@ -11,13 +12,12 @@
 
     <script>
         document.getElementById("send-btn").addEventListener("click", async () => {
+            // A simple POST request with the contents to be transmitted in the text field of the Headers
+            // Used to send information from the browser to the redbean (and thus to other browsers)
             const url = "http://127.0.0.1:8080";
 
             fetch(url, {
                 method: "POST",
-                body: JSON.stringify({
-                    text: "Hello, world!"
-                }),
                 headers: {
                     "Content-type": "application/json; charset=UTF-8",
                     "text": "Hello, world!"

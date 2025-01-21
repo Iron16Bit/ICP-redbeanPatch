@@ -5,5 +5,5 @@ sudo kill -SIGKILL $(lsof -t -i:3000)
 sudo rm ./redbean.com
 sudo make -j8 o//tool/net/redbean
 sudo mv ./o/tool/net/redbean ./redbean.com
-sudo zip ./redbean.com ./index.html
+sudo zip ./redbean.com ./index.html ./communicator_api.js
 ./redbean.com
