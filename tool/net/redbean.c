@@ -7557,38 +7557,60 @@ struct MSG {
 // Functions used to make the struct a buffer that can be sent through a socket
 // and recompose it
 
-// Serialize the MSG struct into a binary buffer
-void serialize_msg(const struct MSG *msg, char *buffer) {
-  // Ensure sender_ip is copied correctly
-  memcpy(buffer, msg->sender_ip, 16);
+// Serialize MSG struct into a delimited string
+char *serialize_msg(const struct MSG *msg) {
+  // Allocate buffer: sender_ip (16) + type (max 11 digits) + data (256) + delimiters + null terminator
+  char *buffer = malloc(16 + 11 + 256 + 3 + 1);  // 3 delimiters + 1 null terminator
+  if (!buffer) return NULL;
 
-  // Convert type to network byte order and copy it
-  int type_network_order = htonl(msg->type);
-  memcpy(buffer + 16, &type_network_order, sizeof(int));
+  // Write sender_ip
+  strcpy(buffer, msg->sender_ip);
+  strcat(buffer, "|");
 
-  // Copy data (assuming it is dynamically allocated)
-  memcpy(buffer + 20, msg->data, 256);  // Ensure msg->data is a null-terminated
-                                        // string of at least 256 bytes
+  // Write type as string
+  char type_str[12];
+  snprintf(type_str, sizeof(type_str), "%d", msg->type);
+  strcat(buffer, type_str);
+  strcat(buffer, "|");
+
+  // Write data
+  strcat(buffer, msg->data);
+
+  return buffer;  // Caller must free this memory
 }
 
-// Deserialize a binary buffer into an MSG struct
+// Deserialize a delimited string into an MSG struct
 void deserialize_msg(const char *buffer, struct MSG *msg) {
-  // Allocate memory for sender_ip and data if needed
-  msg->sender_ip = (char *)malloc(16 * sizeof(char));  // Allocate space for IP
-  msg->data = (char *)malloc(256 * sizeof(char));  // Allocate space for data
+    // Create a mutable copy of the buffer
+    char *temp = strdup(buffer);
+    if (!temp) return;
 
-  // Copy sender_ip and ensure null-termination
-  memcpy(msg->sender_ip, buffer, 16);
-  msg->sender_ip[15] = '\0';  // Ensure null-termination for safety
+    // Parse sender_ip
+    char *token = strtok(temp, "|");
+    if (token) {
+        msg->sender_ip = strdup(token); // Copy sender_ip
+    } else {
+        msg->sender_ip = NULL;
+    }
 
-  // Extract type and convert to host byte order
-  int type_network_order;
-  memcpy(&type_network_order, buffer + 16, sizeof(int));
-  msg->type = ntohl(type_network_order);
+    // Parse type
+    token = strtok(NULL, "|");
+    if (token) {
+        msg->type = atoi(token); // Convert type to an integer
+    } else {
+        msg->type = 0; // Default to 0 if missing
+    }
 
-  // Copy data and ensure null-termination
-  memcpy(msg->data, buffer + 20, 256);
-  msg->data[255] = '\0';  // Ensure null-termination for safety
+    // Parse data
+    token = strtok(NULL, "|");
+    if (token) {
+        msg->data = strdup(token); // Copy data
+    } else {
+        msg->data = NULL;
+    }
+
+    // Free the temporary buffer
+    free(temp);
 }
 
 // TODO -------------
@@ -7612,6 +7634,8 @@ void send_event(int client_fd, const char *message) {
   send(client_fd, buffer, strlen(buffer), 0);
 }
 
+// Another small HTTP server opened on a different socket
+// Used to send data from the redbean to C using SSE (Server-Sent Events)
 int server_main() {
   int server_fd, client_fd;
   struct sockaddr_in server_addr, client_addr;
@@ -7645,30 +7669,35 @@ int server_main() {
 
   printf("SSE server is running on port %d...\n", PORT);
 
+  //TODO Make this while check if data has been added to some struct and if so send it
+  //TODO NB: No struct at the moment. Probably array of strings
+  //TODO NB2: The strings are the stringified JSONs of the updates to the editor
   while (1) {
-    // Accept a new client connection
+    // Accept a new browser client connection
     if ((client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len)) == -1) {
       perror("accept");
       continue;
+    } else {
+      // Succesfullt connected to the browser client
+      // Get the client's IP address
+      inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
+      printf("New connection from %s\n", client_ip);
+
+      // Send the initial HTTP response headers
+      send(client_fd, RESPONSE_HEADER, strlen(RESPONSE_HEADER), 0);
+
+      // Send PING MSG to browser client
+      struct MSG ping;
+      ping.sender_ip = strdup("localhost");
+      ping.type = PING;
+      ping.data = strdup("");
+      send_event(client_fd, serialize_msg(&ping));
     }
-
-    // Get the client's IP address
-    inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
-    printf("New connection from %s\n", client_ip);
-
-    // Send the initial HTTP response headers
-    send(client_fd, RESPONSE_HEADER, strlen(RESPONSE_HEADER), 0);
-
-    // Stream events to the client
-    for (int i = 0; i < 5; i++) { // Example: Send 5 events
-        send_event(client_fd, "Hello from Cosmopolitan!");
-        sleep(1); // Wait 1 second between messages
-    }
-
-    // Close the connection after sending events
-    shutdown(client_fd, SHUT_RDWR);
-    close(client_fd);
   }
+
+  // Close the connection with the browser client
+  shutdown(client_fd, SHUT_RDWR);
+  close(client_fd);
 
   // Close the server socket
   close(server_fd);
@@ -7742,7 +7771,12 @@ void inject() {
           char value[1024] = {0}; // Buffer to store the extracted text
           memcpy(value, start, length);
           value[length] = '\0'; // Null-terminate the string
-          printf("Extracted text: %s\n", value);
+          struct MSG received_msg;
+          deserialize_msg(value, &received_msg);
+          // Print the deserialized values
+          printf("Sender IP: %s\n", received_msg.sender_ip);
+          printf("Type: %d\n", received_msg.type);
+          printf("Data: %s\n", received_msg.data);
       } else {
           printf("Error: End of text field not found.\n");
       }
