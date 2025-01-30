@@ -7835,42 +7835,42 @@ int client_main() {
   return 0;
 }
 
-int client_socket(char local_ip[INET_ADDRSTRLEN]) {
-  sleep(2);
+int msg_to_socket(struct MSG *msg, char dest_ip[INET_ADDRSTRLEN]) {
   int status, valread, client_fd;
+
+  // Setup dest server socket
   struct sockaddr_in serv_addr;
-  char* hello = "Hello from client";
-  char buffer[1024] = { 0 };
+  serv_addr.sin_family = AF_INET;
+  serv_addr.sin_addr.s_addr = inet_addr(dest_ip);
+  //serv_addr.sin_port = htons(3030);
+  //! Using a different port for testing on the same machine
+  serv_addr.sin_port = htons(5010);
+
+  // Create a new socket to communicate with the server socket
   if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
     printf("\n Socket creation error \n");
     return -1;
   }
 
-  serv_addr.sin_family = AF_INET;
-  serv_addr.sin_addr.s_addr = inet_addr(local_ip);
-  serv_addr.sin_port = htons(3030);
-
-  if ((status
-      = connect(client_fd, (struct sockaddr*)&serv_addr,
-                sizeof(serv_addr)))
-    < 0) {
+  // Connect to the server socket
+  if ((connect(client_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))) < 0) {
     printf("\nConnection Failed \n");
     return -1;
   }
-  send(client_fd, hello, strlen(hello), 0);
-  printf("Hello message sent\n");
 
-  while(1) {
-    valread = read(client_fd, buffer,
-                  1024 - 1); // subtract 1 for the null
-                            // terminator at the end
-    if (valread > 0) {
-      printf("CLIENT READ: %s\n", buffer);
-    }
+  // Serialize the message we want to send
+  char *buffer = serialize_msg(msg);
+  status = send(client_fd, buffer, strlen(buffer), 0);
+
+  if (status > 0) {
+    printf("Message should have been successfully sent\n");
+  } else {
+    printf("Error sending message\n");
   }
 
-  // closing the connected socket
+  // Close socket
   close(client_fd);
+
   return 0;
 }
 
@@ -7915,9 +7915,15 @@ int client_main2() {
     exit(EXIT_FAILURE);
   }
 
-  // Now that the server for the client has been created, we can fork and also start the actual client
   if (fork() == 0) {
-    client_socket(local_ip);
+    printf("Sending message to other socket\n");
+    // Format dest_ip in the right buffer
+    char dest_ip[INET_ADDRSTRLEN];
+    snprintf(dest_ip, 22, "0.0.0.0");
+
+    // Try to send a message to another socket server given IP (PORT for server is standard 3030 in this case)
+    struct MSG msg = {local_ip, 0, "Spero questo messaggio ti trovi bene"};
+    msg_to_socket(&msg, dest_ip);
     return 0;
   }
 
