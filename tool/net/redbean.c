@@ -7476,6 +7476,47 @@ void RedBean(int argc, char *argv[]) {
 
 //! Modified redbean start here
 
+//Get local IPv4 address of the network interface in use
+char* get__ipv4() {
+  int sock;
+  struct sockaddr_in server_addr, local_addr;
+  uint32_t addr_len = sizeof(local_addr);
+
+  // Create a UDP socket
+  sock = socket(AF_INET, SOCK_DGRAM, 0);
+  if (sock == -1) {
+    perror("Socket creation failed");
+    exit(1);
+}
+
+  // Configure a dummy server address (e.g., Google's DNS server)
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(53); // DNS port
+  server_addr.sin_addr.s_addr = inet_addr("8.8.8.8");
+
+  // Connect to the dummy server
+  if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
+    perror("Connect failed");
+    close(sock);
+    exit(1);
+  }
+
+  // Get the local socket name (local IP and port)
+  if (getsockname(sock, (struct sockaddr *)&local_addr, &addr_len) == -1) {
+    perror("getsockname failed");
+    close(sock);
+    exit(1);
+  }
+
+  // Convert the local IP to a string and print it
+  printf("Local IPv4 in use: %s\n", inet_ntoa(local_addr.sin_addr));
+  char *ip = inet_ntoa(local_addr.sin_addr);
+
+  // Close the socket
+  close(sock);
+  return ip;
+}
+
 // Struct to store (IP, socket) pairs
 typedef struct {
   char ip[16];  // IP address
@@ -7557,6 +7598,7 @@ struct MSG {
 // Functions used to make the struct a buffer that can be sent through a socket
 // and recompose it
 
+// The following serialize and deserialize are used when communicating with the browser client
 // Serialize MSG struct into a delimited string
 char *serialize_msg(const struct MSG *msg) {
   // Allocate buffer: sender_ip (16) + type (max 11 digits) + data (256) + delimiters + null terminator
@@ -7581,41 +7623,49 @@ char *serialize_msg(const struct MSG *msg) {
 
 // Deserialize a delimited string into an MSG struct
 void deserialize_msg(const char *buffer, struct MSG *msg) {
-    // Create a mutable copy of the buffer
-    char *temp = strdup(buffer);
-    if (!temp) return;
+  // Create a mutable copy of the buffer
+  char *temp = strdup(buffer);
+  if (!temp) return;
 
-    // Parse sender_ip
-    char *token = strtok(temp, "|");
-    if (token) {
-        msg->sender_ip = strdup(token); // Copy sender_ip
-    } else {
-        msg->sender_ip = NULL;
-    }
+  // Parse sender_ip
+  char *token = strtok(temp, "|");
+  if (token) {
+    msg->sender_ip = strdup(token); // Copy sender_ip
+  } else {
+    msg->sender_ip = NULL;
+  }
 
-    // Parse type
-    token = strtok(NULL, "|");
-    if (token) {
-        msg->type = atoi(token); // Convert type to an integer
-    } else {
-        msg->type = 0; // Default to 0 if missing
-    }
+  // Parse type
+  token = strtok(NULL, "|");
+  if (token) {
+    msg->type = atoi(token); // Convert type to an integer
+  } else {
+    msg->type = 0; // Default to 0 if missing
+  }
 
-    // Parse data
-    token = strtok(NULL, "|");
-    if (token) {
-        msg->data = strdup(token); // Copy data
-    } else {
-        msg->data = NULL;
-    }
+  // Parse data
+  token = strtok(NULL, "|");
+  if (token) {
+    msg->data = strdup(token); // Copy data
+  } else {
+    msg->data = NULL;
+  }
 
-    // Free the temporary buffer
-    free(temp);
+  // Free the temporary buffer
+  free(temp);
+}
+// ------------------------------
+
+// The following send message is used instead when communicating with other redbeans
+void send_message(int socket, struct MSG *message) {
+  char *buffer = serialize_msg(message);
+  send(socket, buffer, strlen(buffer), 0);
+  free(buffer);
 }
 
 // TODO -------------
 
-#define PORT 3000
+#define PORT 3000   // PORT of the server
 #define BACKLOG 10
 #define RESPONSE_HEADER "HTTP/1.1 200 OK\r\n" \
                         "Content-Type: text/event-stream\r\n" \
@@ -7687,10 +7737,7 @@ int server_main() {
       send(client_fd, RESPONSE_HEADER, strlen(RESPONSE_HEADER), 0);
 
       // Send PING MSG to browser client
-      struct MSG ping;
-      ping.sender_ip = strdup("localhost");
-      ping.type = PING;
-      ping.data = strdup("");
+      struct MSG ping = {"localhost", PING, ""};
       send_event(client_fd, serialize_msg(&ping));
     }
   }
@@ -7704,53 +7751,209 @@ int server_main() {
   return 0;
 }
 
-// TCP Client Socket
-void client_main() {
-  int client_socket;
-  struct sockaddr_in server_addr;
-  char buffer[512];
-  const char *message = "Hello, WebSocket server!";
+// Client Socket created to communicate with other redbeans and exchange messages
+int client_main() {
+  int sock;
+  struct sockaddr_in dest_addr, client_addr;
+  char buffer[1024];
+  char local_ip[INET_ADDRSTRLEN];
 
-  // Create a TCP socket
-  client_socket = socket(AF_INET, SOCK_STREAM, 0);
-  if (client_socket == -1) {
-    perror("Socket creation failed");
+  snprintf(local_ip, 22, get__ipv4());
+
+  // Set socket params
+  client_addr.sin_family = AF_INET;
+  client_addr.sin_port = htons(3030);
+  client_addr.sin_addr.s_addr = inet_addr(local_ip);
+
+  // Create socket
+  if ((sock = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+    perror("socket");
+    return 1;
+  }
+
+  // Bind the socket to the port
+  if (bind(sock, (struct sockaddr *)&client_addr, sizeof(client_addr)) == -1) {
+    perror("bind");
+    close(sock);
+    return 1;
+  }
+
+  // Define server address
+  //server_addr.sin_family = AF_INET;
+  //server_addr.sin_port = htons(3000);
+  //server_addr.sin_addr.s_addr = inet_addr(local_ip); // Use local IP
+
+  // Connect to server
+  //if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
+    //perror("connect");
+    //close(sock);
+    //return 1;
+  //}
+
+  //printf("Connected to server on port %d\n", PORT);
+
+  // Send message to another socket
+  int dest_sock;
+  dest_addr.sin_family = AF_INET;
+  dest_addr.sin_port = htons(3030); // Example port
+  dest_addr.sin_addr.s_addr = inet_addr("192.168.1.219"); // Example IP
+
+  if ((dest_sock = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+    perror("socket");
+    return 1;
+  }
+
+  if (connect(dest_sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr)) == -1) {
+    perror("connect");
+    close(dest_sock);
+    return 1;
+  }
+
+  struct MSG client_msg = {"127.0.0.1", DATA, "Hello other socket"};
+  send_message(dest_sock, &client_msg);
+
+  shutdown(dest_sock, SHUT_RDWR);
+  close(dest_sock);
+
+  // Continuous loop to receive messages
+  while (1) {
+    ssize_t received = recv(sock, buffer, 1024 - 1, 0);
+    if (received > 0) {
+      buffer[received] = '\0';
+      // Deserialize received message
+      struct MSG received_msg;
+      deserialize_msg(buffer, &received_msg);
+      printf("Received in client: %s\n", received_msg.type);
+      
+      // Process received message (placeholder for actual handling logic)
+    }
+  }
+
+  // Close main socket
+  shutdown(sock, SHUT_RDWR);
+  close(sock);
+  return 0;
+}
+
+int client_socket(char local_ip[INET_ADDRSTRLEN]) {
+  sleep(2);
+  int status, valread, client_fd;
+  struct sockaddr_in serv_addr;
+  char* hello = "Hello from client";
+  char buffer[1024] = { 0 };
+  if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    printf("\n Socket creation error \n");
+    return -1;
+  }
+
+  serv_addr.sin_family = AF_INET;
+  serv_addr.sin_addr.s_addr = inet_addr(local_ip);
+  serv_addr.sin_port = htons(3030);
+
+  if ((status
+      = connect(client_fd, (struct sockaddr*)&serv_addr,
+                sizeof(serv_addr)))
+    < 0) {
+    printf("\nConnection Failed \n");
+    return -1;
+  }
+  send(client_fd, hello, strlen(hello), 0);
+  printf("Hello message sent\n");
+
+  while(1) {
+    valread = read(client_fd, buffer,
+                  1024 - 1); // subtract 1 for the null
+                            // terminator at the end
+    if (valread > 0) {
+      printf("CLIENT READ: %s\n", buffer);
+    }
+  }
+
+  // closing the connected socket
+  close(client_fd);
+  return 0;
+}
+
+// Sockets need to connect to a server and they exchange messages through the server
+// The previous server is needed to communicate with the browser, it's better not to mix them up (for the moment, at least)
+// This means that each redbean will create a socket server and a socket and will use its socket to communicate with the others' socket servers
+int client_main2() {
+  // Create server socket
+  int server_fd, new_socket;
+  ssize_t valread;
+  struct sockaddr_in address;
+  int opt = 1;
+  socklen_t addrlen = sizeof(address);
+  char buffer[1024] = { 0 };
+  char* hello = "Hello from server";
+  char local_ip[INET_ADDRSTRLEN];
+
+  snprintf(local_ip, 22, get__ipv4());
+
+  // Creating socket file descriptor
+  if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    perror("socket failed");
     exit(EXIT_FAILURE);
   }
 
-  // Configure the server address
-  server_addr.sin_family = AF_INET;
-  server_addr.sin_port = htons(3000);
-  server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+  // Set server socket IP and PORT
+  if (setsockopt(server_fd, SOL_SOCKET,
+                SO_REUSEADDR | SO_REUSEPORT, &opt,
+                sizeof(opt))) {
+    perror("setsockopt");
+    exit(EXIT_FAILURE);
+  }
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = inet_addr(local_ip);
+  address.sin_port = htons(3030);
 
-  // Connect to the server
-  if (connect(client_socket, (struct sockaddr *)&server_addr,
-              sizeof(server_addr)) == -1) {
-    perror("Connection to server failed");
-    close(client_socket);
+  // Forcefully attaching socket to the specified IP and PORT
+  if (bind(server_fd, (struct sockaddr*)&address,
+          sizeof(address))
+    < 0) {
+    perror("bind failed");
     exit(EXIT_FAILURE);
   }
 
-  // Send a message to the server
-  if (send(client_socket, message, strlen(message), 0) == -1) {
-    perror("Failed to send message");
-    close(client_socket);
-    exit(EXIT_FAILURE);
-  }
-  printf("Sent message: %s\n", message);
-
-  // Receive a response from the server
-  ssize_t bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
-  if (bytes_received > 0) {
-    buffer[bytes_received] = '\0';  // Null-terminate the received data
-    printf("Received response: %s\n", buffer);
-  } else {
-    printf("No response received or connection closed by the server.\n");
+  // Now that the server for the client has been created, we can fork and also start the actual client
+  if (fork() == 0) {
+    client_socket(local_ip);
+    return 0;
   }
 
-  // Close the connection
-  close(client_socket);
-  printf("Connection closed.\n");
+  // Server loop
+  while(1) {
+    if (listen(server_fd, 3) < 0) {
+      perror("listen");
+      exit(EXIT_FAILURE);
+    }
+    if ((new_socket
+        = accept(server_fd, (struct sockaddr*)&address,
+                &addrlen))
+      < 0) {
+      perror("accept");
+      exit(EXIT_FAILURE);
+    } else {
+      send(new_socket, hello, strlen(hello), 0);
+      printf("Hello message sent\n");
+    }
+
+    valread = read(new_socket, buffer,
+                  1024 - 1); // subtract 1 for the null
+                              // terminator at the end
+
+    if (valread > 0) {
+      printf("SERVER READ: %s\n", buffer);
+    }
+  }
+
+  // On termination, close everything
+  // closing the connected socket
+  close(new_socket);
+  // closing the listening socket
+  close(server_fd);
+
+  return 0;
 }
 
 
@@ -7787,12 +7990,12 @@ void inject() {
 
 int main(int argc, char *argv[]) {
   if (fork() == 0) {
-    server_main();
+    //server_main();
     exit(0);
   }
   if (fork() == 0) {
     sleep(1);
-    // client_main();
+    client_main2();
     exit(0);
   }
   //! End here
