@@ -57,6 +57,9 @@ eventSource.onmessage = (event) => {
                     "text": serialized_msg
                 }
             });
+        } else if (message.type == 2) {
+            // Received a SETUP msg
+            document.getElementById("local_ip").textContent += " " + message.data;
         }
     } catch (error) {
         console.error('Failed to deserialize message:', error);

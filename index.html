@@ -7,23 +7,7 @@
     <script src="communicator.js"></script>
 </head>
 <body>
-    <h1>HTTP Client</h1>
-    <button id="send-btn">Send POST</button>
-
-    <script>
-        document.getElementById("send-btn").addEventListener("click", async () => {
-            // A simple POST request with the contents to be transmitted in the text field of the Headers
-            // Used to send information from the browser to the redbean (and thus to other browsers)
-            const url = "http://127.0.0.1:8080";
-
-            fetch(url, {
-                method: "POST",
-                headers: {
-                    "Content-type": "application/json; charset=UTF-8",
-                    "text": "Hello, world!"
-                }
-            });
-        });
-    </script>
+    <h1>P2P Browser Client</h1>
+    <p id="local_ip">Local IP:</p>
 </body>
 </html>
