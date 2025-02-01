@@ -7488,7 +7488,7 @@ char* get__ipv4() {
     exit(1);
 }
 
-  // Configure a dummy server address (e.g., Google's DNS server)
+  // Configure a dummy server address
   server_addr.sin_family = AF_INET;
   server_addr.sin_port = htons(53); // DNS port
   server_addr.sin_addr.s_addr = inet_addr("8.8.8.8");
@@ -7508,7 +7508,6 @@ char* get__ipv4() {
   }
 
   // Convert the local IP to a string and print it
-  printf("Local IPv4 in use: %s\n", inet_ntoa(local_addr.sin_addr));
   char *ip = inet_ntoa(local_addr.sin_addr);
 
   // Close the socket
@@ -7840,238 +7839,6 @@ void send_event(int client_fd, const char *message) {
   send(client_fd, buffer, strlen(buffer), 0);
 }
 
-// Local IP is used several times in different parts of the code, we can make it global
-char local_ip[INET_ADDRSTRLEN];
-
-// We also make the socket used to communicate with client_main() global
-// This allows inject() to reuse it
-int redbean_client = 0;
-
-// Another small HTTP server opened on a different socket
-// Used to send data from the redbean to C using SSE (Server-Sent Events)
-int server_main() {
-  int server_fd = 0; 
-  int browser_client = 0; 
-  struct sockaddr_in server_addr, client_addr;
-  socklen_t client_len = sizeof(client_addr);
-  char client_ip[INET_ADDRSTRLEN];
-
-  // Create a socket
-  if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-    perror("socket");
-    return 1;
-  }
-
-  // Set the server socket to non-blocking mode
-  // if (fcntl(server_fd, F_SETFL, O_NONBLOCK) < 0) {
-  //  perror("fcntl failed");
-  //  close(server_fd);
-  //  exit(EXIT_FAILURE);
-  //}
-
-  // Configure the server address
-  server_addr.sin_family = AF_INET;
-  server_addr.sin_port = htons(PORT);
-  server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-  // Bind the socket to the port
-  if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
-    perror("bind");
-    close(server_fd);
-    return 1;
-  }
-
-  // Start listening for incoming connections
-  if (listen(server_fd, BACKLOG) == -1) {
-    perror("listen");
-    close(server_fd);
-    return 1;
-  }
-
-  printf("SSE server is running on port %d...\n", PORT);
-
-  int first = 0;
-  int valread;
-  char buffer[1024] = { 0 };
-
-  int child = fork();
-  if (child == 0) {
-    sleep(1);
-    while (1) {
-      valread = read(redbean_client, buffer,
-                    1024 - 1); // subtract 1 for the null
-                                // terminator at the end
-
-      if (valread > 0) {
-        struct MSG received_msg;
-        deserialize_msg(buffer, &received_msg);
-
-        if (received_msg.type == PING) {
-          // Answer with a PONG
-          struct MSG pong = {"localhost", PONG, ""};
-          char *buffer = serialize_msg(&pong);
-          //msg_to_socket(&pong, local_ip);
-          send(redbean_client, buffer, strlen(buffer), 0);
-        }
-      }
-    }
-
-    exit(0);
-  } else {
-    while(first < 2) {
-      // Accept a new browser client connection
-      if (first == 0) {
-        // The first msg will be sent by the redbean and not the browser
-        // This is only an assumption, although a sensible one 
-        // (as the msg from the browser is sent only after it has been opened and the page has loaded)
-        first += 1;
-
-        if ((redbean_client = accept(server_fd, (struct sockaddr *)&client_addr, &client_len)) == -1) {
-          perror("accept");
-        }
-      } else {
-        first += 1;
-
-        if ((browser_client = accept(server_fd, (struct sockaddr *)&client_addr, &client_len)) == -1) {
-          perror("accept");
-        } else {
-          // Succesfully connected to the browser client
-          // Get the client's IP address
-          inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
-          printf("New connection from %s\n", client_ip);
-
-          // Send the initial HTTP response headers
-          send(browser_client, RESPONSE_HEADER, strlen(RESPONSE_HEADER), 0);
-
-          // Send PING MSG to browser client
-          struct MSG ping = {"boccalone", PING, ""};
-          send_event(browser_client, serialize_msg(&ping));
-        }
-      }
-    }
-
-    wait(&child);
-  }
-
-  // Close the connection with the clients
-  shutdown(browser_client, SHUT_RDWR);
-  close(browser_client);
-  shutdown(redbean_client, SHUT_RDWR);
-  close(redbean_client);
-
-  // Close the server socket
-  close(server_fd);
-  return 0;
-}
-
-// Client Socket created to communicate with other redbeans and exchange messages
-// Sockets need to connect to a server and they exchange messages through the server
-// The previous server is needed to communicate with the browser, it's better not to mix them up (for the moment, at least)
-// This means that each redbean will create a socket server and a socket and will use its socket to communicate with the others' socket servers
-int client_main() {
-  // Create server socket
-  int server_fd = 0; 
-  int new_socket = 0;
-  ssize_t valread;
-  struct sockaddr_in address;
-  int opt = 1;
-  socklen_t addrlen = sizeof(address);
-  char buffer[1024] = { 0 };
-
-  snprintf(local_ip, 22, get__ipv4());
-
-  // Creating socket file descriptor
-  if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-    perror("socket failed");
-    exit(EXIT_FAILURE);
-  }
-
-  if (setsockopt(server_fd, SOL_SOCKET,
-                SO_REUSEADDR | SO_REUSEPORT, &opt,
-                sizeof(opt))) {
-    perror("setsockopt");
-    exit(EXIT_FAILURE);
-  }
-
-  // Set server socket IP and PORT
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = inet_addr(local_ip);
-  address.sin_port = htons(3030);
-
-  // Forcefully attaching socket to the specified IP and PORT
-  if (bind(server_fd, (struct sockaddr*)&address,
-          sizeof(address))
-    < 0) {
-    perror("bind failed");
-    exit(EXIT_FAILURE);
-  }
-
-  // On creation, send a PING msg to server_main() in order to store its socket
-  struct MSG msg = {local_ip, 0, "NULL"};
-  int redbean_server = msg_to_server(&msg);
-
-  if (listen(server_fd, BACKLOG) < 0) {
-    perror("listen");
-    exit(EXIT_FAILURE);
-  }
-
-  // Server loop for internal messages
-  if (fork() == 0) {
-    while(1) {
-      valread = read(redbean_server, buffer, 1024 - 1);
-
-      if (valread > 0) {
-        struct MSG received_msg;
-        deserialize_msg(buffer, &received_msg);
-
-        // Act based on message received
-        if (received_msg.type == PONG) {
-          printf("client_main() received PONG from %s\n", received_msg.sender_ip);
-        } else if (received_msg.type == SETUP) {
-          printf("RECEIVED SETUP\n");
-        } 
-      }
-    }
-
-    exit(0);
-  }
-
-  // Server loop for new connections with other redbeans
-  while(1) {
-    if ((new_socket
-        = accept(server_fd, (struct sockaddr*)&address,
-                &addrlen))
-      < 0) {
-      perror("accept");
-      exit(EXIT_FAILURE);
-    }
-
-    valread = read(new_socket, buffer,
-                  1024 - 1); // subtract 1 for the null
-                              // terminator at the end
-
-    if (valread > 0) {
-      struct MSG received_msg;
-      deserialize_msg(buffer, &received_msg);
-
-      // Act based on message received
-      if (received_msg.type == SETUP) {
-        printf("RECEIVED SETUP\n");
-      } else {
-        
-      }
-    }
-
-    close(new_socket);
-  }
-  
-  // closing the listening socket
-  close(server_fd);
-
-  return 0;
-}
-
-
 // inject is just a funny name at the moment
 // Used to take advantage of redbean's HTTP server by having a custom handler for POST requests that would have been discarded
 
@@ -8096,32 +7863,206 @@ void inject() {
           // Act based on the received message
           if (received_msg.type == PONG) {
             // If we received a PONG, the browser client is ready. We can tell client_main() to send the local IP with a SETUP message
-            struct MSG setup = {"localhost", SETUP, local_ip};
-            char *buffer = serialize_msg(&setup);
-            printf("SENDING SETUP\n");
-            send(redbean_client, buffer, strlen(buffer), 0);
-            printf("SENT SETUP\n");
+            struct MSG setup = {"localhost", SETUP, get__ipv4()};
+            char dest_ip[INET_ADDRSTRLEN];
+            snprintf(dest_ip, 22, get__ipv4());
+            msg_to_socket(&setup, dest_ip);
           }
       } else {
-          printf("Error: End of text field not found.\n");
+        printf("Error: End of text field not found.\n");
       }
   } else {
       printf("Error: 'text' field not found.\n");
   }
 }
 
+int p2p_setup() {
+  // Setup the various server sockets
+  int server_main = 0; 
+  int client_main = 0; 
+  struct sockaddr_in server_addr, client_addr;
+  socklen_t client_len = sizeof(client_addr);
+  char local_ip[INET_ADDRSTRLEN];
+
+  struct sockaddr_in address;
+  int opt = 1;
+  socklen_t addrlen = sizeof(address);
+
+  // Create sockets
+  if ((server_main = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+    perror("server_main socket error");
+    return 1;
+  }
+  if ((client_main = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+    perror("client_main socket error");
+    return 1;
+  }
+  if (setsockopt(client_main, SOL_SOCKET,
+                SO_REUSEADDR | SO_REUSEPORT, &opt,
+                sizeof(opt))) {
+    perror("setsockopt");
+    exit(EXIT_FAILURE);
+  }
+
+  // Configure the server addresses
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(3000);
+  server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+  client_addr.sin_family = AF_INET;
+  client_addr.sin_port = htons(3030);
+  snprintf(local_ip, 22, get__ipv4());
+  client_addr.sin_addr.s_addr = inet_addr(local_ip);
+
+  printf("Local IPv4 address: %s\n", local_ip);
+
+  // Bind the sockets
+  if (bind(server_main, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
+    perror("server_main bind error");
+    close(server_main);
+    return 1;
+  }
+  if (bind(client_main, (struct sockaddr *)&client_addr, sizeof(client_addr)) == -1) {
+    perror("client_main bind error");
+    close(client_main);
+    return 1;
+  }
+
+  // Start listening for incoming connections
+  if (listen(server_main, BACKLOG) == -1) {
+    perror("server_main listen error");
+    close(server_main);
+    return 1;
+  }
+  if (listen(client_main, BACKLOG) == -1) {
+    perror("client_main listen error");
+    close(client_main);
+    return 1;
+  }
+
+  printf("SSE server is running on port %d...\n", PORT);
+
+  // Start server_main loop
+  int first = 0;
+  int valread;
+  char buffer[1024] = { 0 };
+
+  int redbean_client = 0;
+  int browser_client = 0;
+
+  if (fork() == 0) {
+    while(1) {
+      // Accept a new browser client connection
+      if (first == 0) {
+        // The first msg will be sent by the redbean and not the browser
+        // This is only an assumption, although a sensible one 
+        // (as the msg from the browser is sent only after it has been opened and the page has loaded)
+        first += 1;
+
+        if ((redbean_client = accept(server_main, (struct sockaddr *)&client_addr, &client_len)) == -1) {
+          perror("accept");
+        }
+      } else {
+        if ((browser_client = accept(server_main, (struct sockaddr *)&client_addr, &client_len)) == -1) {
+          perror("accept");
+        } else {
+          // Succesfully connected to the browser client
+          printf("New connection on SSE server\n");
+
+          // Send the initial HTTP response headers
+          send(browser_client, RESPONSE_HEADER, strlen(RESPONSE_HEADER), 0);
+
+          // Send PING MSG to browser client
+          struct MSG ping = {"localhost", PING, ""};
+          send_event(browser_client, serialize_msg(&ping));
+        }
+      }
+
+      valread = read(redbean_client, buffer,
+                    1024 - 1); // subtract 1 for the null
+                                // terminator at the end
+
+      if (valread > 0) {
+        struct MSG received_msg;
+        deserialize_msg(buffer, &received_msg);
+
+        if (received_msg.type == PING) {
+          // Answer with a PONG
+          struct MSG pong = {"localhost", PONG, ""};
+          char *buffer = serialize_msg(&pong);
+          //msg_to_socket(&pong, local_ip);
+          send(redbean_client, buffer, strlen(buffer), 0);
+        } else if (received_msg.type == SETUP) {
+          printf("server_main() received SETUP\n");
+          send_event(browser_client, serialize_msg(&received_msg));
+        }
+      }
+    }
+
+    exit(0);
+  }
+
+  // On creation, send a PING msg to server_main() in order to store its socket
+  struct MSG msg = {local_ip, 0, "NULL"};
+  int redbean_server = msg_to_server(&msg);
+
+  // Start server loop for client_main internal messages
+  // Server loop for internal messages
+  if (fork() == 0) {
+    while(1) {
+      valread = read(redbean_server, buffer, 1024 - 1);
+
+      if (valread > 0) {
+        struct MSG received_msg;
+        deserialize_msg(buffer, &received_msg);
+
+        // Act based on message received
+        if (received_msg.type == PONG) {
+          printf("client_main() received PONG from %s\n", received_msg.sender_ip);
+        }
+      }
+    }
+
+    exit(0);
+  }
+
+  // Start server loop for communication with external sockets
+  int new_socket = 0;
+  
+  if (fork() == 0) {
+    while(1) {
+      if ((new_socket = accept(client_main, (struct sockaddr*)&address, &addrlen)) < 0) {
+        perror("accept");
+        exit(EXIT_FAILURE);
+      }
+
+      valread = read(new_socket, buffer,
+                    1024 - 1); // subtract 1 for the null
+                                // terminator at the end
+
+      if (valread > 0) {
+        struct MSG received_msg;
+        deserialize_msg(buffer, &received_msg);
+
+        // Act based on message received
+        if (received_msg.type == SETUP) {
+          printf("client_main() received SETUP\n");
+          send(redbean_server, buffer, strlen(buffer), 0);
+        } 
+      }
+
+      close(new_socket);
+    }
+
+    exit(0);
+  }
+
+  return 0;
+}
+
 
 int main(int argc, char *argv[]) {
-  msg_to_browser = create_queue();
-  if (fork() == 0) {
-    server_main();
-    exit(0);
-  }
-  if (fork() == 0) {
-    sleep(1);
-    client_main();
-    exit(0);
-  }
+  p2p_setup();
   //! End here
 
   lua_progname = "redbean";
