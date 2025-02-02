@@ -6,6 +6,12 @@ const eventSource = new EventSource('http://localhost:3000');
 // The browser client can send MSGs to the redbean from here
 const redbean_url = "http://127.0.0.1:8080";
 
+// "Enum" with the various msg types
+// INTERNAL_PING = 0; 
+// PONG = 1; 
+// SETUP = 2;
+// PING = 3;
+
 // Utilities to transform a MSG JSON into a string and viceversa 
 function serializeMsg(msg) {
     // Ensure the object contains the necessary fields
@@ -41,7 +47,7 @@ eventSource.onmessage = (event) => {
         // Log the reconstructed message
         console.log('Deserialized Message:', message);
 
-        // If the message is a PING, answer with a PONG
+        // If the message is an INTERNAL_PING, answer with a PONG
         if (message.type == 0) {
             const PONG = {
                 sender_ip: "localhost",

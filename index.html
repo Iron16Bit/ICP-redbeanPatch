@@ -3,11 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HTTP Client</title>
+    <title>P2P Browser Client</title>
     <script src="communicator.js"></script>
+    <style>
+        .container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        input {
+            padding: 5px;
+        }
+        button {
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+    </style>
 </head>
 <body>
     <h1>P2P Browser Client</h1>
     <p id="local_ip">Local IP:</p>
+
+
+    <div class="container">
+        <span>SEND PING TO:</span>
+        <input type="text" id="ipAddress" value="192.168.1.138" placeholder="Enter IP">
+        <button onclick="sendPing()">Send</button>
+    </div>
+
+    <script>
+        function sendPing() {
+            let ip = document.getElementById('ipAddress').value.trim(); // Trim spaces
+            ip = ip.replace(/\r/g, ""); // Remove carriage return if present
+            console.log("IP Sent:", ip, "Length:", ip.length);
+
+            // Validate IPv4 format (optional but recommended)
+            const ipv4Regex = new RegExp(
+                "^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\." +
+                "(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\." +
+                "(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\." +
+                "(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$"
+            );
+
+            if (!ipv4Regex.test(ip)) {
+                alert("Invalid IPv4 address.");
+                return;
+            }
+            
+            const msg = {
+                sender_ip: "localhost",
+                type: 3,
+                data: ip
+            };
+            const serialized_msg = serializeMsg(msg);
+
+            fetch(redbean_url, {
+                method: "POST",
+                headers: {
+                    "Content-type": "application/json; charset=UTF-8",
+                    "text": serialized_msg
+                }
+            });
+        }
+    </script>
 </body>
 </html>

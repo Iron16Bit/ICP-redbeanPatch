@@ -7586,10 +7586,10 @@ void free_array(DynamicArray *array) {
 
 // Enum of all possible MSG types
 enum MSG_type { 
-  PING, 
+  INTERNAL_PING, 
   PONG, 
   SETUP,
-  FORWARD 
+  PING, 
 };
 
 // MSG struct
@@ -7598,86 +7598,6 @@ struct MSG {
   enum MSG_type type;  // Message type (e.g., PING)
   char *data;          // Message data (can be empty for PING)
 };
-
-// MSG QUEUE
-// Queue node struct
-struct Node {
-  struct MSG message;
-  struct Node *next;
-};
-
-// Queue struct
-struct Queue {
-  struct Node *front;
-  struct Node *rear;
-};
-
-// Initialize queue
-struct Queue* create_queue() {
-  struct Queue* queue = (struct Queue*) malloc(sizeof(struct Queue));
-  if (!queue) {
-    printf("Memory allocation failed\n");
-    exit(1);
-  }
-  queue->front = queue->rear = NULL;
-  return queue;
-}
-
-// Enqueue message
-void enqueue(struct Queue* queue, struct MSG message) {
-  struct Node* new_node = (struct Node*) malloc(sizeof(struct Node));
-  if (!new_node) {
-    printf("Memory allocation failed\n");
-    exit(1);
-  }
-  new_node->message = message;
-  new_node->next = NULL;
-  
-  if (!queue->rear) {
-    queue->front = queue->rear = new_node;
-    return;
-  }
-  
-  queue->rear->next = new_node;
-  queue->rear = new_node;
-}
-
-// Dequeue message
-struct MSG dequeue(struct Queue* queue) {
-  if (!queue->front) {
-    printf("Queue underflow\n");
-    exit(1);
-  }
-  
-  struct Node* temp = queue->front;
-  struct MSG msg = temp->message;
-  queue->front = queue->front->next;
-  
-  if (!queue->front) {
-    queue->rear = NULL;
-  }
-  
-  free(temp);
-  return msg;
-}
-
-// Check if queue is empty
-int is_empty(struct Queue* queue) {
-  return queue->front == NULL;
-}
-
-// Free queue memory
-void free_queue(struct Queue* queue) {
-  while (!is_empty(queue)) {
-    struct MSG msg = dequeue(queue);
-    free(msg.sender_ip);
-    free(msg.data);
-  }
-  free(queue);
-}
-
-// Global QUEUE containing msgs to send to the browser client
-struct Queue* msg_to_browser;
 
 // Functions used to make the struct a buffer that can be sent through a socket
 // and recompose it
@@ -7741,17 +7661,19 @@ void deserialize_msg(const char *buffer, struct MSG *msg) {
 // ------------------------------
 
 // Send msg to specified ip at port 3030 (it contacts other client_main())
-int msg_to_socket(struct MSG *msg, char dest_ip[INET_ADDRSTRLEN]) {
+int msg_to_socket(struct MSG *msg, char* dest_ip) {
   int status, valread, client_fd;
   int port = 3030;
 
   // Setup dest server socket
   struct sockaddr_in serv_addr;
   serv_addr.sin_family = AF_INET;
-  serv_addr.sin_addr.s_addr = inet_addr(dest_ip);
   serv_addr.sin_port = htons(port);
-  //! Using a different port for testing on the same machine
-  //serv_addr.sin_port = htons(5010);
+
+  if (inet_pton(AF_INET, dest_ip, &serv_addr.sin_addr) <= 0) {
+    printf("Invalid address: %s\n", dest_ip);
+    return -1;
+  }
 
   // Create a new socket to communicate with the server socket
   if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -7759,9 +7681,10 @@ int msg_to_socket(struct MSG *msg, char dest_ip[INET_ADDRSTRLEN]) {
     return -1;
   }
 
-  // Connect to the server socket
   if ((connect(client_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))) < 0) {
-    printf("\nConnection Failed \n");
+    printf("\nConnection Failed: %s\n", strerror(errno)); // Prints human-readable error
+    perror("connect"); // Prints error with "connect" prefix
+    close(client_fd);
     return -1;
   }
 
@@ -7867,6 +7790,14 @@ void inject() {
             char dest_ip[INET_ADDRSTRLEN];
             snprintf(dest_ip, 22, get__ipv4());
             msg_to_socket(&setup, dest_ip);
+          } else if (received_msg.type == PING) {
+            // We are asked to ping a specific IP
+            struct MSG msg = {get__ipv4(), PING, "NULL"};
+            printf("msg_data: %s\n", msg.data);
+            char dest_ip[INET_ADDRSTRLEN];
+            snprintf(dest_ip, INET_ADDRSTRLEN, received_msg.data);
+            dest_ip[strlen(dest_ip)-1] = '\0';
+            msg_to_socket(&msg, dest_ip);
           }
       } else {
         printf("Error: End of text field not found.\n");
@@ -7972,8 +7903,8 @@ int p2p_setup() {
           // Send the initial HTTP response headers
           send(browser_client, RESPONSE_HEADER, strlen(RESPONSE_HEADER), 0);
 
-          // Send PING MSG to browser client
-          struct MSG ping = {"localhost", PING, ""};
+          // Send INTERNAL_PING MSG to browser client
+          struct MSG ping = {"localhost", INTERNAL_PING, ""};
           send_event(browser_client, serialize_msg(&ping));
         }
       }
@@ -7986,14 +7917,12 @@ int p2p_setup() {
         struct MSG received_msg;
         deserialize_msg(buffer, &received_msg);
 
-        if (received_msg.type == PING) {
+        if (received_msg.type == INTERNAL_PING) {
           // Answer with a PONG
           struct MSG pong = {"localhost", PONG, ""};
           char *buffer = serialize_msg(&pong);
-          //msg_to_socket(&pong, local_ip);
           send(redbean_client, buffer, strlen(buffer), 0);
         } else if (received_msg.type == SETUP) {
-          printf("server_main() received SETUP\n");
           send_event(browser_client, serialize_msg(&received_msg));
         }
       }
@@ -8019,6 +7948,8 @@ int p2p_setup() {
         // Act based on message received
         if (received_msg.type == PONG) {
           printf("client_main() received PONG from %s\n", received_msg.sender_ip);
+        } else if (received_msg.type == PING) {
+          printf("pingami l'anima\n");
         }
       }
     }
@@ -8031,7 +7962,8 @@ int p2p_setup() {
   
   if (fork() == 0) {
     while(1) {
-      if ((new_socket = accept(client_main, (struct sockaddr*)&address, &addrlen)) < 0) {
+      new_socket = accept(client_main, (struct sockaddr*)&address, &addrlen);
+      if (new_socket < 0) {
         perror("accept");
         exit(EXIT_FAILURE);
       }
@@ -8041,17 +7973,25 @@ int p2p_setup() {
                                 // terminator at the end
 
       if (valread > 0) {
+        printf("RECEIVED: %s\n", buffer);
         struct MSG received_msg;
         deserialize_msg(buffer, &received_msg);
+        printf("Source: %s\n", received_msg.sender_ip);
+        printf("Type: %d\n", received_msg.type);
+        printf("Data: %s\n", received_msg.data);
 
         // Act based on message received
         if (received_msg.type == SETUP) {
-          printf("client_main() received SETUP\n");
+          // If we received a SETUP, we want to tell the browser client our IP
           send(redbean_server, buffer, strlen(buffer), 0);
-        } 
+        } else if (received_msg.type == PING) {
+          printf("Received PING\n");
+
+        }
       }
 
       close(new_socket);
+      memset(buffer, 0, sizeof(buffer));
     }
 
     exit(0);
