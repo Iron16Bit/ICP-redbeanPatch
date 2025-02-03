@@ -7793,7 +7793,6 @@ void inject() {
           } else if (received_msg.type == PING) {
             // We are asked to ping a specific IP
             struct MSG msg = {get__ipv4(), PING, "NULL"};
-            printf("msg_data: %s\n", msg.data);
             char dest_ip[INET_ADDRSTRLEN];
             snprintf(dest_ip, INET_ADDRSTRLEN, received_msg.data);
             dest_ip[strlen(dest_ip)-1] = '\0';
@@ -7947,9 +7946,7 @@ int p2p_setup() {
 
         // Act based on message received
         if (received_msg.type == PONG) {
-          printf("client_main() received PONG from %s\n", received_msg.sender_ip);
-        } else if (received_msg.type == PING) {
-          printf("pingami l'anima\n");
+          printf("Internal server ready!\n");
         }
       }
     }
@@ -7973,19 +7970,15 @@ int p2p_setup() {
                                 // terminator at the end
 
       if (valread > 0) {
-        printf("RECEIVED: %s\n", buffer);
         struct MSG received_msg;
         deserialize_msg(buffer, &received_msg);
-        printf("Source: %s\n", received_msg.sender_ip);
-        printf("Type: %d\n", received_msg.type);
-        printf("Data: %s\n", received_msg.data);
 
         // Act based on message received
         if (received_msg.type == SETUP) {
           // If we received a SETUP, we want to tell the browser client our IP
           send(redbean_server, buffer, strlen(buffer), 0);
         } else if (received_msg.type == PING) {
-          printf("Received PING\n");
+          printf("Received PING from IP: %s\n", received_msg.sender_ip);
 
         }
       }
