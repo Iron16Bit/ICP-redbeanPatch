@@ -7593,6 +7593,7 @@ enum MSG_type {
   SETUP_COOPERATION,
   CONFIRM_COOPERATION,
   REFRESH,
+  COOPERATION_READY,
 };
 
 // MSG struct
@@ -7672,6 +7673,12 @@ int msg_to_socket(struct MSG *msg, char* dest_ip) {
   struct sockaddr_in serv_addr;
   serv_addr.sin_family = AF_INET;
   serv_addr.sin_port = htons(port);
+
+  int len = strlen(dest_ip);
+  while (len > 0 && (dest_ip[len - 1] == '\r' || dest_ip[len - 1] == '\n')) {
+    dest_ip[len - 1] = '\0';
+    len--;
+  }
 
   if (inet_pton(AF_INET, dest_ip, &serv_addr.sin_addr) <= 0) {
     printf("Invalid address: %s\n", dest_ip);
@@ -7804,6 +7811,11 @@ void inject() {
             // Forward refresh to redbean_client
             struct MSG msg = {"localhost", REFRESH, "NULL"};
             msg_to_socket(&msg, get__ipv4());
+          } else if (received_msg.type == SETUP_COOPERATION) {
+            // Send SETUP_COOPERATIO to peer
+            struct MSG msg = {get__ipv4(), SETUP_COOPERATION, "NULL"};
+            printf("Sending SETUP_COOPERATION to %s\n", received_msg.data);
+            msg_to_socket(&msg, received_msg.data);
           }
       } else {
         printf("Error: End of text field not found.\n");
@@ -7897,6 +7909,7 @@ int p2p_setup() {
         // This is only an assumption, although a sensible one 
         // (as the msg from the browser is sent only after it has been opened and the page has loaded)
         first += 1;
+        printf("redbean_client connected\n");
 
         if ((redbean_client = accept(server_main, (struct sockaddr *)&client_addr, &client_len)) == -1) {
           perror("accept");
@@ -7907,7 +7920,7 @@ int p2p_setup() {
             perror("accept");
           } else {
             // Succesfully connected to the browser client
-            printf("New connection on SSE server\n");
+            printf("browser_client connected\n");
 
             // Send the initial HTTP response headers
             send(browser_client, RESPONSE_HEADER, strlen(RESPONSE_HEADER), 0);
@@ -7938,7 +7951,7 @@ int p2p_setup() {
           send(redbean_client, buffer, strlen(buffer), 0);
         } else if (received_msg.type == SETUP) {
           send_event(browser_client, serialize_msg(&received_msg));
-        } else if (received_msg.type == SETUP_COOPERATION) {
+        } else if (received_msg.type == COOPERATION_READY) {
           send_event(browser_client, serialize_msg(&received_msg));
         } else if (received_msg.type == CONFIRM_COOPERATION) {
           send_event(browser_client, serialize_msg(&received_msg));
@@ -7957,26 +7970,6 @@ int p2p_setup() {
   // On creation, send a PING msg to server_main() in order to store its socket
   struct MSG msg = {local_ip, 0, "NULL"};
   int redbean_server = msg_to_server(&msg);
-
-  // Start server loop for client_main internal messages
-  // Server loop for internal messages
-  if (fork() == 0) {
-    while(1) {
-      valread = read(redbean_server, buffer, 1024 - 1);
-
-      if (valread > 0) {
-        struct MSG received_msg;
-        deserialize_msg(buffer, &received_msg);
-
-        // Act based on message received
-        if (received_msg.type == PONG) {
-          printf("Internal server ready!\n");
-        }
-      }
-    }
-
-    exit(0);
-  }
 
   // Start server loop for communication with external sockets
   int new_socket = 0;
@@ -8009,11 +8002,12 @@ int p2p_setup() {
           // Send CONFIRM_COOPERATION
           struct MSG confirm = {local_ip, CONFIRM_COOPERATION, peer_ip};
           send(redbean_server, serialize_msg(&confirm), strlen(serialize_msg(&confirm)), 0);
-        } else if (received_msg.type == PONG) {
-          // We received a PONG from the redbean we contacted (a peer). Save it and tell browser client to initialize cooperation
+        } else if (received_msg.type == SETUP_COOPERATION) {
+          // We received a SETUP_COOPERATION from the redbean we contacted (a peer). Save it and tell browser client to initialize cooperation
+          printf("Received COOPERATION_READY\n");
           snprintf(peer_ip, 22, received_msg.sender_ip);
-          struct MSG setup_coop = {local_ip, SETUP_COOPERATION, ""};
-          send(redbean_server, serialize_msg(&setup_coop), strlen(serialize_msg(&setup_coop)), 0);
+          struct MSG coop_ready = {local_ip, COOPERATION_READY, ""};
+          send(redbean_server, serialize_msg(&coop_ready), strlen(serialize_msg(&coop_ready)), 0);
         } else if (received_msg.type == REFRESH) {
           // Forward to redbean_server
           send(redbean_server, buffer, strlen(buffer), 0);
