@@ -7961,6 +7961,8 @@ int p2p_setup() {
             first -= 1;
           }
         }
+
+        memset(buffer, 0, sizeof(buffer));
       }
     }
 
