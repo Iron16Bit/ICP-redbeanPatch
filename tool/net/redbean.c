@@ -7596,6 +7596,7 @@ enum MSG_type {
   COOPERATION_READY,
   REQUEST_CODE,
   INITIALIZE_CODE,
+  SEND_CHANGESET,
 };
 
 // MSG struct
@@ -7611,21 +7612,18 @@ struct MSG {
 // The following serialize and deserialize are used when communicating with the browser client
 // Serialize MSG struct into a delimited string
 char *serialize_msg(const struct MSG *msg) {
-  printf("DENTRO 1\n");
   char *buffer = malloc(8192);  // 3 delimiters + 1 null terminator
   if (!buffer) return NULL;
 
   // Write sender_ip
   strcpy(buffer, msg->sender_ip);
   strcat(buffer, "|");
-  printf("DENTRO 2\n");
 
   // Write type as string
   char type_str[12];
   snprintf(type_str, sizeof(type_str), "%d", msg->type);
   strcat(buffer, type_str);
   strcat(buffer, "|");
-  printf("DENTRO 3\n");
 
   // Write data
   if (msg->data) {
@@ -7633,7 +7631,6 @@ char *serialize_msg(const struct MSG *msg) {
   } else {
     strcat(buffer, " ");
   }
-  printf("DENTRO 4\n");
 
   return buffer;  // Caller must free this memory
 }
@@ -7775,11 +7772,9 @@ int msg_to_server(struct MSG *msg) {
 #define SSE_DATA_PREFIX "data: "
 
 void send_event(int client_fd, const char *message) {
-  printf("SONO DENTROOOOOOO\n");
   // Construct the SSE message
   char buffer[8192];
   snprintf(buffer, sizeof(buffer), "%s%s\n\n", SSE_DATA_PREFIX, message);
-  printf("%s\n", buffer);
 
   // Send the message to the client
   if (send(client_fd, buffer, strlen(buffer), 0) == -1) {
@@ -7834,6 +7829,9 @@ void inject() {
             // We forward it to the redbean_client
             msg_to_socket(&received_msg, get__ipv4());
           } else if (received_msg.type == INITIALIZE_CODE) {
+            // We forward it to the redbean_client
+            msg_to_socket(&received_msg, get__ipv4());
+          } else if (received_msg.type == SEND_CHANGESET) {
             // We forward it to the redbean_client
             msg_to_socket(&received_msg, get__ipv4());
           }
@@ -7964,8 +7962,6 @@ int p2p_setup() {
         struct MSG received_msg;
         deserialize_msg(buffer, &received_msg);
 
-        printf("Recived message %d\n", received_msg.type);
-
         if (received_msg.type == INTERNAL_PING) {
           // Answer with a PONG
           struct MSG pong = {"localhost", PONG, ""};
@@ -7980,7 +7976,6 @@ int p2p_setup() {
           char *tmp = serialize_msg(&received_msg);
           send_event(browser_client, tmp);
           free(tmp);
-          printf("Sent to browser_client\n");
         } else if (received_msg.type == CONFIRM_COOPERATION) {
           char *tmp = serialize_msg(&received_msg);
           send_event(browser_client, tmp);
@@ -7994,6 +7989,10 @@ int p2p_setup() {
           char *tmp = serialize_msg(&received_msg);
           send_event(browser_client, tmp);
         } else if (received_msg.type == INITIALIZE_CODE) {
+          char *tmp = serialize_msg(&received_msg);
+          send_event(browser_client, tmp);
+          free(tmp);
+        } else if (received_msg.type == SEND_CHANGESET) {
           char *tmp = serialize_msg(&received_msg);
           send_event(browser_client, tmp);
           free(tmp);
@@ -8035,7 +8034,6 @@ int p2p_setup() {
           send(redbean_server, buffer, strlen(buffer), 0);
         } else if (received_msg.type == PING) {
           // We received a PING from another redbean (a peer). Ask browser client for confirmation
-          printf("Received PING from IP: %s\n", received_msg.sender_ip);
           // Save IP
           snprintf(peer_ip, 22, received_msg.sender_ip);
           // Send CONFIRM_COOPERATION
@@ -8045,13 +8043,11 @@ int p2p_setup() {
           free(tmp);
         } else if (received_msg.type == SETUP_COOPERATION) {
           // We received a SETUP_COOPERATION from the redbean we contacted (a peer). Save it and tell browser client to initialize cooperation
-          printf("Received COOPERATION_READY\n");
           snprintf(peer_ip, 22, received_msg.sender_ip);
           struct MSG coop_ready = {local_ip, COOPERATION_READY, ""};
           char *tmp = serialize_msg(&coop_ready);
           send(redbean_server, tmp, strlen(tmp), 0);
           free(tmp);
-          printf("Sent to redbean_server\n");
         } else if (received_msg.type == REFRESH) {
           // Forward to redbean_server
           send(redbean_server, buffer, strlen(buffer), 0);
@@ -8059,11 +8055,9 @@ int p2p_setup() {
           if (strcmp(received_msg.sender_ip, "localhost") == 0) {
             // It is an internal message, so we forward it to the connected peer
             struct MSG msg = {local_ip, REQUEST_CODE, ""};
-            printf("Sending REQUEST_CODE to peer\n");
             msg_to_socket(&msg, peer_ip);
           } else {
             // The peer (and host) received REQUEST_CODE, so we forward it to the browser_client
-            printf("Received REQUEST_CODE\n");
             char *tmp = serialize_msg(&received_msg);
             send(redbean_server, tmp, strlen(tmp), 0);
             free(tmp);
@@ -8075,6 +8069,17 @@ int p2p_setup() {
             msg_to_socket(&msg, peer_ip);
           } else {
             // Message received from peer (host), send it to browse_client
+            char *tmp = serialize_msg(&received_msg);
+            send(redbean_server, tmp, strlen(tmp), 0);
+            free(tmp);
+          }
+        } else if (received_msg.type == SEND_CHANGESET) {
+          if (strcmp(received_msg.sender_ip, "localhost") == 0) {
+            // Forward new changeset to peer
+            struct MSG msg = {local_ip, SEND_CHANGESET, received_msg.data};
+            msg_to_socket(&msg, peer_ip);
+          } else {
+            // Forward received changeset to browser_client
             char *tmp = serialize_msg(&received_msg);
             send(redbean_server, tmp, strlen(tmp), 0);
             free(tmp);
