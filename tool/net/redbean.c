@@ -7515,75 +7515,6 @@ char* get__ipv4() {
   return ip;
 }
 
-
-//? FROM HERE TILL THE NEXT ?, THE CODE IS UNUSED AT THE MOMENT
-// Struct to store (IP, socket) pairs
-typedef struct {
-  char ip[16];  // IP address
-  int socket;   // Socket descriptor
-} Neighbor;
-
-// Dynamic array for storing neighbors
-typedef struct {
-  Neighbor *data;   // Array of Neighbor structs
-  size_t size;      // Current number of elements
-  size_t capacity;  // Maximum capacity of the array
-} DynamicArray;
-
-// Initialize the dynamic array
-void init_array(DynamicArray *array, size_t initial_capacity) {
-  array->data = (Neighbor *)malloc(initial_capacity * sizeof(Neighbor));
-  if (!array->data) {
-    perror("Failed to allocate memory");
-    exit(1);
-  }
-  array->size = 0;
-  array->capacity = initial_capacity;
-}
-
-// Add a Neighbor to the array
-void add_element(DynamicArray *array, const char *ip, int socket) {
-  if (array->size == array->capacity) {
-    size_t new_capacity = array->capacity * 2;
-    Neighbor *new_data =
-        (Neighbor *)realloc(array->data, new_capacity * sizeof(Neighbor));
-    if (!new_data) {
-      perror("Failed to reallocate memory");
-      free(array->data);
-      exit(1);
-    }
-    array->data = new_data;
-    array->capacity = new_capacity;
-  }
-  // Copy the IP address with proper null-termination
-  strncpy(array->data[array->size].ip, ip, 15);
-  array->data[array->size].ip[15] = '\0';  // Ensure null-termination
-  array->data[array->size].socket = socket;
-  array->size++;
-}
-
-// Find a Neighbor in the array by IP
-int find_neighbor(const DynamicArray *array, const char *ip) {
-  for (size_t i = 0; i < array->size; i++) {
-    if (strcmp(array->data[i].ip, ip) == 0) {
-      return i;  // Return the index
-    }
-  }
-  return -1;  // Not found
-}
-
-// Free the dynamic array
-void free_array(DynamicArray *array) {
-  for (size_t i = 0; i < array->size; i++) {
-    close(array->data[i].socket);  // Close all sockets
-  }
-  free(array->data);
-  array->data = NULL;
-  array->size = 0;
-  array->capacity = 0;
-}
-//? UNUSED ENDS HERE
-
 // Enum of all possible MSG types
 enum MSG_type { 
   INTERNAL_PING, 
@@ -7597,6 +7528,7 @@ enum MSG_type {
   REQUEST_CODE,
   INITIALIZE_CODE,
   SEND_CHANGESET,
+  STOP_COOPERATION,
 };
 
 // MSG struct
@@ -7687,7 +7619,12 @@ int msg_to_socket(struct MSG *msg, char* dest_ip) {
   }
 
   if (inet_pton(AF_INET, dest_ip, &serv_addr.sin_addr) <= 0) {
-    printf("Invalid address: %s\n", dest_ip);
+    printf("Error msg type: %d\n To: %s\n", msg->type,dest_ip);
+    printf("Received dest_ip: '");
+    for (int i = 0; dest_ip[i] != '\0'; i++) {
+      printf("%c", dest_ip[i]);
+    }
+    printf("'\n");
     return -1;
   }
 
@@ -7731,8 +7668,6 @@ int msg_to_server(struct MSG *msg) {
   serv_addr.sin_family = AF_INET;
   serv_addr.sin_addr.s_addr = inet_addr(dest_ip);
   serv_addr.sin_port = htons(port);
-  //! Using a different port for testing on the same machine
-  //serv_addr.sin_port = htons(5010);
 
   // Create a new socket to communicate with the server socket
   if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -7823,7 +7758,6 @@ void inject() {
           } else if (received_msg.type == SETUP_COOPERATION) {
             // Send SETUP_COOPERATION to peer
             struct MSG msg = {get__ipv4(), SETUP_COOPERATION, "NULL"};
-            printf("Sending SETUP_COOPERATION to %s\n", received_msg.data);
             msg_to_socket(&msg, received_msg.data);
           } else if (received_msg.type == REQUEST_CODE) {
             // We forward it to the redbean_client
@@ -7832,6 +7766,9 @@ void inject() {
             // We forward it to the redbean_client
             msg_to_socket(&received_msg, get__ipv4());
           } else if (received_msg.type == SEND_CHANGESET) {
+            // We forward it to the redbean_client
+            msg_to_socket(&received_msg, get__ipv4());
+          } else if (received_msg.type == STOP_COOPERATION) {
             // We forward it to the redbean_client
             msg_to_socket(&received_msg, get__ipv4());
           }
@@ -7996,6 +7933,10 @@ int p2p_setup() {
           char *tmp = serialize_msg(&received_msg);
           send_event(browser_client, tmp);
           free(tmp);
+        } else if (received_msg.type == STOP_COOPERATION) {
+          char *tmp = serialize_msg(&received_msg);
+          send_event(browser_client, tmp);
+          free(tmp);
         }
 
         memset(buffer, 0, sizeof(buffer));
@@ -8083,6 +8024,21 @@ int p2p_setup() {
             char *tmp = serialize_msg(&received_msg);
             send(redbean_server, tmp, strlen(tmp), 0);
             free(tmp);
+          }
+        } else if (received_msg.type == STOP_COOPERATION) {
+          if (strcmp(received_msg.sender_ip, "localhost") == 0) {
+            // Forward to peer
+            struct MSG msg = {local_ip, STOP_COOPERATION, received_msg.data};
+            msg_to_socket(&msg, peer_ip);
+            // Clean peer ip
+            memset(peer_ip, 0, sizeof(peer_ip));
+          } else {
+            // Forward to browser_client
+            char *tmp = serialize_msg(&received_msg);
+            send(redbean_server, tmp, strlen(tmp), 0);
+            free(tmp);
+            // Clean peer ip
+            memset(peer_ip, 0, sizeof(peer_ip));
           }
         }
       }
