@@ -20,6 +20,11 @@ A second HTTP server is created on port 3000. The browser connects to this port 
 
 Finally, to separate internal and external communication, a socket server is created on port 3030. It is used to send MSGs to other redbean's sockets and receive those MSGs. Thus, we have the *redbean -> redbean* communication.
 
+**NB:** The ports described above are the default ones, it is possible to use the following parameters to change them:
+- ``` -p #### ``` : open redbean HTTP server on port #### [default 8080]
+- ``` -event #### ``` : open event server on port #### [default 3000]
+- ``` -socket #### ``` : open socket server on port #### [default 3030]
+
 ## MSG Exchange
 
 ![Redbean MSG exchange stack](./repo_assets/redbeanMSGs.png)

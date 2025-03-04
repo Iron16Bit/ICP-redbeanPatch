@@ -7656,9 +7656,8 @@ int msg_to_socket(struct MSG *msg, char* dest_ip) {
   return 0;
 }
 
-int msg_to_server(struct MSG *msg) {
+int msg_to_server(struct MSG *msg, int port) {
   int status, valread, client_fd;
-  int port = 3000;
 
   char dest_ip[INET_ADDRSTRLEN];
   snprintf(dest_ip, 22, "127.0.0.1");
@@ -7696,7 +7695,6 @@ int msg_to_server(struct MSG *msg) {
 
 // TODO -------------
 
-#define PORT 3000   // PORT of the server
 #define BACKLOG 10
 #define RESPONSE_HEADER "HTTP/1.1 200 OK\r\n" \
                         "Content-Type: text/event-stream\r\n" \
@@ -7780,7 +7778,7 @@ void inject() {
   }
 }
 
-int p2p_setup() {
+int p2p_setup(int server_port, int event_port) {
   // Setup the various server sockets
   int server_main = 0; 
   int client_main = 0; 
@@ -7810,15 +7808,13 @@ int p2p_setup() {
 
   // Configure the server addresses
   server_addr.sin_family = AF_INET;
-  server_addr.sin_port = htons(3000);
+  server_addr.sin_port = htons(event_port);
   server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
   client_addr.sin_family = AF_INET;
-  client_addr.sin_port = htons(3030);
+  client_addr.sin_port = htons(server_port);
   snprintf(local_ip, 22, get__ipv4());
   client_addr.sin_addr.s_addr = inet_addr(local_ip);
-
-  printf("Local IPv4 address: %s\n", local_ip);
 
   // Bind the sockets
   if (bind(server_main, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
@@ -7844,7 +7840,8 @@ int p2p_setup() {
     return 1;
   }
 
-  printf("SSE server is running on port %d...\n", PORT);
+  printf("SSE server is running on port %d...\n", event_port);
+  printf("Socket Server is running on %s:%d\n", local_ip, server_port);
 
   // Start server_main loop
   int first = 0;
@@ -7948,7 +7945,7 @@ int p2p_setup() {
 
   // On creation, send a PING msg to server_main() in order to store its socket
   struct MSG msg = {local_ip, 0, "NULL"};
-  int redbean_server = msg_to_server(&msg);
+  int redbean_server = msg_to_server(&msg, event_port);
 
   // Start server loop for communication with external sockets
   int new_socket = 0;
@@ -8055,7 +8052,44 @@ int p2p_setup() {
 
 
 int main(int argc, char *argv[]) {
-  p2p_setup();
+
+  // Check if user passed non-default ports
+  int server_port = 3030;
+  int event_port = 3000;
+  char *endptr;
+
+  // Need to create new argv and argc without -event and -socket options as they are not recognized by redbean
+  char **new_argv = malloc(argc * sizeof(char*));
+  int new_argc = 0;
+  new_argv[new_argc++] = argv[0];
+
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "-socket") == 0) {
+      server_port = strtol(argv[i + 1], &endptr, 10);
+      if (*endptr != '\0' || server_port <= 0 || server_port > 65535) {
+        fprintf(stderr, "Error: Invalid socket server port number\n");
+        exit(1);
+      }
+      i++;
+      continue;
+    }
+    else if (strcmp(argv[i], "-event") == 0) {
+      event_port = strtol(argv[i + 1], &endptr, 10);
+      if (*endptr != '\0' || event_port <= 0 || event_port > 65535) {
+        fprintf(stderr, "Error: Invalid event server port number\n");
+        exit(1);
+      }
+      i++;
+      continue;
+    }
+    new_argv[new_argc++] = argv[i];
+  }
+
+  // Update argc and argv
+  argc = new_argc;
+  argv = new_argv;
+
+  p2p_setup(server_port, event_port);
   //! End here
 
   lua_progname = "redbean";
