@@ -7091,8 +7091,6 @@ static void Listen(void) {
       ip = ntohl(servers.p[n].addr.sin_addr.s_addr);
       if (ip == INADDR_ANY)
         ip = INADDR_LOOPBACK;
-      INFOF("(srvr) listen http://%hhu.%hhu.%hhu.%hhu:%d", ip >> 24, ip >> 16,
-            ip >> 8, ip, port);
       if (printport && !ports.p[j]) {
         printf("%d\r\n", port);
         fflush(stdout);
@@ -7619,24 +7617,17 @@ int msg_to_socket(struct MSG *msg, char* dest_ip) {
   }
 
   if (inet_pton(AF_INET, dest_ip, &serv_addr.sin_addr) <= 0) {
-    printf("Error msg type: %d\n To: %s\n", msg->type,dest_ip);
-    printf("Received dest_ip: '");
-    for (int i = 0; dest_ip[i] != '\0'; i++) {
-      printf("%c", dest_ip[i]);
-    }
-    printf("'\n");
-    return -1;
+    printf("Error converting IP\n");
   }
 
   // Create a new socket to communicate with the server socket
   if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-    printf("\n Socket creation error \n");
+    perror("\n Socket creation error \n");
     return -1;
   }
 
   if ((connect(client_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))) < 0) {
-    printf("\nConnection Failed: %s\n", strerror(errno)); // Prints human-readable error
-    perror("connect"); // Prints error with "connect" prefix
+    perror("Connection failed\n");
     close(client_fd);
     return -1;
   }
@@ -7647,7 +7638,7 @@ int msg_to_socket(struct MSG *msg, char* dest_ip) {
   free(buffer);
 
   if (status <= 0) {
-    printf("Error sending message\n");
+    perror("Error sending message\n");
   }
 
   // Close socket
@@ -7670,13 +7661,13 @@ int msg_to_server(struct MSG *msg, int port) {
 
   // Create a new socket to communicate with the server socket
   if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-    printf("\n Socket creation error \n");
+    perror("\n Socket creation error \n");
     return -1;
   }
 
   // Connect to the server socket
   if ((connect(client_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))) < 0) {
-    printf("\nConnection Failed \n");
+    perror("\nConnection Failed \n");
     return -1;
   }
 
@@ -7686,14 +7677,12 @@ int msg_to_server(struct MSG *msg, int port) {
   free(buffer);
 
   if (status <= 0) {
-    printf("Error sending message\n");
+    perror("Error sending message\n");
   }
 
   // Close socket
   return client_fd;
 }
-
-// TODO -------------
 
 #define BACKLOG 10
 #define RESPONSE_HEADER "HTTP/1.1 200 OK\r\n" \
@@ -7771,10 +7760,10 @@ void inject() {
             msg_to_socket(&received_msg, get__ipv4());
           }
       } else {
-        printf("Error: End of text field not found.\n");
+        perror("Error: End of text field not found.\n");
       }
   } else {
-      printf("Error: 'text' field not found.\n");
+      perror("Error: 'text' field not found.\n");
   }
 }
 
@@ -8056,6 +8045,7 @@ int main(int argc, char *argv[]) {
   // Check if user passed non-default ports
   int server_port = 3030;
   int event_port = 3000;
+  int redbean_port = 8080;
   char *endptr;
 
   // Need to create new argv and argc without -event and -socket options as they are not recognized by redbean
@@ -8082,6 +8072,13 @@ int main(int argc, char *argv[]) {
       i++;
       continue;
     }
+    else if (strcmp(argv[i], "-p") == 0) {
+      redbean_port = strtol(argv[i + 1], &endptr, 10);
+      if (*endptr != '\0' || redbean_port <= 0 || redbean_port > 65535) {
+        fprintf(stderr, "Error: Invalid redbean port number\n");
+        exit(1);
+      }
+    }
     new_argv[new_argc++] = argv[i];
   }
 
@@ -8090,6 +8087,9 @@ int main(int argc, char *argv[]) {
   argv = new_argv;
 
   p2p_setup(server_port, event_port);
+
+  printf("\nICPs slides available at: http://127.0.0.1:%d/?port=%d\n\n", redbean_port, event_port);
+
   //! End here
 
   lua_progname = "redbean";
