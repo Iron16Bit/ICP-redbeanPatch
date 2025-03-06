@@ -7473,7 +7473,12 @@ void RedBean(int argc, char *argv[]) {
 
 //! Modified redbean start here
 
-//Get local IPv4 address of the network interface in use
+// Ports used by the various servers
+int socket_port = 3030;
+int event_port = 3000;
+int redbean_port = 8080;
+
+// Get local IPv4 address of the network interface in use
 char* get__ipv4() {
   int sock;
   struct sockaddr_in server_addr, local_addr;
@@ -7532,6 +7537,7 @@ enum MSG_type {
 // MSG struct
 struct MSG {
   char *sender_ip;     // Sender's IP (e.g., "192.168.0.1")
+  int sender_port;     // Sender's port (e.g., 3030)
   enum MSG_type type;  // Message type (e.g., PING)
   char *data;          // Message data (can be empty for PING)
 };
@@ -7542,68 +7548,82 @@ struct MSG {
 // The following serialize and deserialize are used when communicating with the browser client
 // Serialize MSG struct into a delimited string
 char *serialize_msg(const struct MSG *msg) {
-  char *buffer = malloc(8192);  // 3 delimiters + 1 null terminator
+  char *buffer = malloc(8192);
   if (!buffer) return NULL;
 
-  // Write sender_ip
+  // sender_ip
   strcpy(buffer, msg->sender_ip);
   strcat(buffer, "|");
 
-  // Write type as string
+  // sender_port
+  char port_str[12];
+  snprintf(port_str, sizeof(port_str), "%d", msg->sender_port);
+  strcat(buffer, port_str);
+  strcat(buffer, "|");
+
+  // type
   char type_str[12];
   snprintf(type_str, sizeof(type_str), "%d", msg->type);
   strcat(buffer, type_str);
   strcat(buffer, "|");
 
-  // Write data
+  // data
   if (msg->data) {
-    strcat(buffer, msg->data);
+      strcat(buffer, msg->data);
   } else {
-    strcat(buffer, " ");
+      strcat(buffer, " ");
   }
 
-  return buffer;  // Caller must free this memory
+  return buffer;
 }
 
 // Deserialize a delimited string into an MSG struct
 void deserialize_msg(const char *buffer, struct MSG *msg) {
-  // Create a mutable copy of the buffer
   char *temp = strdup(buffer);
   if (!temp) return;
 
-  // Parse sender_ip
+  // sender_ip
   char *token = strtok(temp, "|");
   if (token) {
-    msg->sender_ip = strdup(token); // Copy sender_ip
+    msg->sender_ip = strdup(token);
   } else {
-    msg->sender_ip = NULL;
+    perror("Missing sender_ip");
+    exit(1);
   }
 
-  // Parse type
+  // sender_port
   token = strtok(NULL, "|");
   if (token) {
-    msg->type = atoi(token); // Convert type to an integer
+    msg->sender_port = atoi(token);
   } else {
-    msg->type = 0; // Default to 0 if missing
+    perror("Missing sender_port");
+    exit(1);
   }
 
-  // Parse data
+  // type
   token = strtok(NULL, "|");
   if (token) {
-    msg->data = strdup(token); // Copy data
+    msg->type = atoi(token);
+  } else {
+    perror("Missing MSG type");
+    exit(1);
+  }
+
+  // data
+  token = strtok(NULL, "|");
+  if (token) {
+    msg->data = strdup(token);
   } else {
     msg->data = NULL;
   }
 
-  // Free the temporary buffer
   free(temp);
 }
 // ------------------------------
 
-// Send msg to specified ip at port 3030 (it contacts other client_main())
-int msg_to_socket(struct MSG *msg, char* dest_ip) {
+// Send msg to specified ip and port
+int msg_to_socket(struct MSG *msg, char* dest_ip, int port) {
   int status, valread, client_fd;
-  int port = 3030;
 
   // Setup dest server socket
   struct sockaddr_in serv_addr;
@@ -7727,37 +7747,74 @@ void inject() {
           // Act based on the received message
           if (received_msg.type == PONG) {
             // If we received a PONG, the browser client is ready. We can tell client_main() to send the local IP with a SETUP message
-            struct MSG setup = {"localhost", SETUP, get__ipv4()};
+            struct MSG setup = {"localhost", socket_port, SETUP, get__ipv4()};
             char dest_ip[INET_ADDRSTRLEN];
             snprintf(dest_ip, 22, get__ipv4());
-            msg_to_socket(&setup, dest_ip);
+            msg_to_socket(&setup, dest_ip, socket_port);
           } else if (received_msg.type == PING) {
-            // We are asked to ping a specific IP
-            struct MSG msg = {get__ipv4(), PING, "NULL"};
+            // We are asked to ping a specific IP and port
+            struct MSG msg = {get__ipv4(), socket_port, PING, "NULL"};
             char dest_ip[INET_ADDRSTRLEN];
-            snprintf(dest_ip, INET_ADDRSTRLEN, received_msg.data);
-            dest_ip[strlen(dest_ip)-1] = '\0';
-            msg_to_socket(&msg, dest_ip);
+            int port;
+
+            // Extract IP and port
+            char *sep = strchr(received_msg.data, ':');
+            if (sep) {
+              size_t ip_len = sep - received_msg.data;
+              if (ip_len < INET_ADDRSTRLEN) {
+                strncpy(dest_ip, received_msg.data, ip_len);
+                dest_ip[ip_len] = '\0';
+              } else {
+                perror("Invalid ip\n");
+                exit(1);
+              }
+              port = atoi(sep + 1);
+            } else {
+              perror("Missing port\n");
+              exit(1);
+            }
+
+            msg_to_socket(&msg, dest_ip, port);
           } else if (received_msg.type == REFRESH) {
             // Forward refresh to redbean_client
-            struct MSG msg = {"localhost", REFRESH, "NULL"};
-            msg_to_socket(&msg, get__ipv4());
+            struct MSG msg = {"localhost", socket_port, REFRESH, "NULL"};
+            msg_to_socket(&msg, get__ipv4(), socket_port);
           } else if (received_msg.type == SETUP_COOPERATION) {
             // Send SETUP_COOPERATION to peer
-            struct MSG msg = {get__ipv4(), SETUP_COOPERATION, "NULL"};
-            msg_to_socket(&msg, received_msg.data);
+            struct MSG msg = {get__ipv4(), socket_port, SETUP_COOPERATION, "NULL"};
+            char dest_ip[INET_ADDRSTRLEN];
+            int port;
+
+            // Extract IP and port
+            char *sep = strchr(received_msg.data, ':');
+            if (sep) {
+              size_t ip_len = sep - received_msg.data;
+              if (ip_len < INET_ADDRSTRLEN) {
+                strncpy(dest_ip, received_msg.data, ip_len);
+                dest_ip[ip_len] = '\0';
+              } else {
+                perror("Invalid ip\n");
+                exit(1);
+              }
+              port = atoi(sep + 1);
+            } else {
+              perror("Missing port\n");
+              exit(1);
+            }
+
+            msg_to_socket(&msg, dest_ip, port);
           } else if (received_msg.type == REQUEST_CODE) {
             // We forward it to the redbean_client
-            msg_to_socket(&received_msg, get__ipv4());
+            msg_to_socket(&received_msg, get__ipv4(), socket_port);
           } else if (received_msg.type == INITIALIZE_CODE) {
             // We forward it to the redbean_client
-            msg_to_socket(&received_msg, get__ipv4());
+            msg_to_socket(&received_msg, get__ipv4(), socket_port);
           } else if (received_msg.type == SEND_CHANGESET) {
             // We forward it to the redbean_client
-            msg_to_socket(&received_msg, get__ipv4());
+            msg_to_socket(&received_msg, get__ipv4(), socket_port);
           } else if (received_msg.type == STOP_COOPERATION) {
             // We forward it to the redbean_client
-            msg_to_socket(&received_msg, get__ipv4());
+            msg_to_socket(&received_msg, get__ipv4(), socket_port);
           }
       } else {
         perror("Error: End of text field not found.\n");
@@ -7767,7 +7824,7 @@ void inject() {
   }
 }
 
-int p2p_setup(int server_port, int event_port) {
+int p2p_setup(int socket_port, int event_port) {
   // Setup the various server sockets
   int server_main = 0; 
   int client_main = 0; 
@@ -7801,7 +7858,7 @@ int p2p_setup(int server_port, int event_port) {
   server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
   client_addr.sin_family = AF_INET;
-  client_addr.sin_port = htons(server_port);
+  client_addr.sin_port = htons(socket_port);
   snprintf(local_ip, 22, get__ipv4());
   client_addr.sin_addr.s_addr = inet_addr(local_ip);
 
@@ -7830,7 +7887,7 @@ int p2p_setup(int server_port, int event_port) {
   }
 
   printf("SSE server is running on port %d...\n", event_port);
-  printf("Socket Server is running on %s:%d\n", local_ip, server_port);
+  printf("Socket Server is running on %s:%d\n", local_ip, socket_port);
 
   // Start server_main loop
   int first = 0;
@@ -7841,6 +7898,7 @@ int p2p_setup(int server_port, int event_port) {
   int browser_client = 0;
 
   char peer_ip[INET_ADDRSTRLEN];
+  int peer_port = 0;
 
   if (fork() == 0) {
     while(1) {
@@ -7867,7 +7925,7 @@ int p2p_setup(int server_port, int event_port) {
             send(browser_client, RESPONSE_HEADER, strlen(RESPONSE_HEADER), 0);
 
             // Send INTERNAL_PING MSG to browser client
-            struct MSG ping = {"localhost", INTERNAL_PING, ""};
+            struct MSG ping = {"localhost", socket_port, INTERNAL_PING, ""};
             char *tmp = serialize_msg(&ping);
             send_event(browser_client, tmp);
             free(tmp);
@@ -7887,7 +7945,7 @@ int p2p_setup(int server_port, int event_port) {
 
         if (received_msg.type == INTERNAL_PING) {
           // Answer with a PONG
-          struct MSG pong = {"localhost", PONG, ""};
+          struct MSG pong = {"localhost", socket_port, PONG, ""};
           char *buffer = serialize_msg(&pong);
           send(redbean_client, buffer, strlen(buffer), 0);
           free(buffer);
@@ -7933,7 +7991,7 @@ int p2p_setup(int server_port, int event_port) {
   }
 
   // On creation, send a PING msg to server_main() in order to store its socket
-  struct MSG msg = {local_ip, 0, "NULL"};
+  struct MSG msg = {local_ip, socket_port, PING, "NULL"};
   int redbean_server = msg_to_server(&msg, event_port);
 
   // Start server loop for communication with external sockets
@@ -7963,15 +8021,17 @@ int p2p_setup(int server_port, int event_port) {
           // We received a PING from another redbean (a peer). Ask browser client for confirmation
           // Save IP
           snprintf(peer_ip, 22, received_msg.sender_ip);
+          peer_port = received_msg.sender_port;
           // Send CONFIRM_COOPERATION
-          struct MSG confirm = {local_ip, CONFIRM_COOPERATION, peer_ip};
+          struct MSG confirm = {local_ip, socket_port, CONFIRM_COOPERATION, peer_ip};
           char *tmp = serialize_msg(&confirm);
           send(redbean_server, tmp, strlen(tmp), 0);
           free(tmp);
         } else if (received_msg.type == SETUP_COOPERATION) {
           // We received a SETUP_COOPERATION from the redbean we contacted (a peer). Save it and tell browser client to initialize cooperation
           snprintf(peer_ip, 22, received_msg.sender_ip);
-          struct MSG coop_ready = {local_ip, COOPERATION_READY, ""};
+          peer_port = received_msg.sender_port;
+          struct MSG coop_ready = {local_ip, socket_port, COOPERATION_READY, ""};
           char *tmp = serialize_msg(&coop_ready);
           send(redbean_server, tmp, strlen(tmp), 0);
           free(tmp);
@@ -7981,8 +8041,8 @@ int p2p_setup(int server_port, int event_port) {
         } else if (received_msg.type == REQUEST_CODE) {
           if (strcmp(received_msg.sender_ip, "localhost") == 0) {
             // It is an internal message, so we forward it to the connected peer
-            struct MSG msg = {local_ip, REQUEST_CODE, ""};
-            msg_to_socket(&msg, peer_ip);
+            struct MSG msg = {local_ip, socket_port, REQUEST_CODE, ""};
+            msg_to_socket(&msg, peer_ip, peer_port);
           } else {
             // The peer (and host) received REQUEST_CODE, so we forward it to the browser_client
             char *tmp = serialize_msg(&received_msg);
@@ -7992,8 +8052,8 @@ int p2p_setup(int server_port, int event_port) {
         } else if (received_msg.type == INITIALIZE_CODE) {
           if (strcmp(received_msg.sender_ip, "localhost") == 0) {
             // Internal message. Send it to the connected peer
-            struct MSG msg = {local_ip, INITIALIZE_CODE, received_msg.data};
-            msg_to_socket(&msg, peer_ip);
+            struct MSG msg = {local_ip, socket_port, INITIALIZE_CODE, received_msg.data};
+            msg_to_socket(&msg, peer_ip, peer_port);
           } else {
             // Message received from peer (host), send it to browse_client
             char *tmp = serialize_msg(&received_msg);
@@ -8003,8 +8063,8 @@ int p2p_setup(int server_port, int event_port) {
         } else if (received_msg.type == SEND_CHANGESET) {
           if (strcmp(received_msg.sender_ip, "localhost") == 0) {
             // Forward new changeset to peer
-            struct MSG msg = {local_ip, SEND_CHANGESET, received_msg.data};
-            msg_to_socket(&msg, peer_ip);
+            struct MSG msg = {local_ip, socket_port, SEND_CHANGESET, received_msg.data};
+            msg_to_socket(&msg, peer_ip, peer_port);
           } else {
             // Forward received changeset to browser_client
             char *tmp = serialize_msg(&received_msg);
@@ -8014,8 +8074,8 @@ int p2p_setup(int server_port, int event_port) {
         } else if (received_msg.type == STOP_COOPERATION) {
           if (strcmp(received_msg.sender_ip, "localhost") == 0) {
             // Forward to peer
-            struct MSG msg = {local_ip, STOP_COOPERATION, received_msg.data};
-            msg_to_socket(&msg, peer_ip);
+            struct MSG msg = {local_ip, socket_port, STOP_COOPERATION, received_msg.data};
+            msg_to_socket(&msg, peer_ip, peer_port);
             // Clean peer ip
             memset(peer_ip, 0, sizeof(peer_ip));
           } else {
@@ -8043,9 +8103,6 @@ int p2p_setup(int server_port, int event_port) {
 int main(int argc, char *argv[]) {
 
   // Check if user passed non-default ports
-  int server_port = 3030;
-  int event_port = 3000;
-  int redbean_port = 8080;
   char *endptr;
 
   // Need to create new argv and argc without -event and -socket options as they are not recognized by redbean
@@ -8055,8 +8112,8 @@ int main(int argc, char *argv[]) {
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "-socket") == 0) {
-      server_port = strtol(argv[i + 1], &endptr, 10);
-      if (*endptr != '\0' || server_port <= 0 || server_port > 65535) {
+      socket_port = strtol(argv[i + 1], &endptr, 10);
+      if (*endptr != '\0' || socket_port <= 0 || socket_port > 65535) {
         fprintf(stderr, "Error: Invalid socket server port number\n");
         exit(1);
       }
@@ -8086,7 +8143,7 @@ int main(int argc, char *argv[]) {
   argc = new_argc;
   argv = new_argv;
 
-  p2p_setup(server_port, event_port);
+  p2p_setup(socket_port, event_port);
 
   printf("\nICPs slides available at: http://127.0.0.1:%d/?port=%d\n\n", redbean_port, event_port);
 
