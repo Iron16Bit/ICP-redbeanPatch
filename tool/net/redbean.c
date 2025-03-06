@@ -8023,10 +8023,15 @@ int p2p_setup(int socket_port, int event_port) {
           snprintf(peer_ip, 22, received_msg.sender_ip);
           peer_port = received_msg.sender_port;
           // Send CONFIRM_COOPERATION
-          struct MSG confirm = {local_ip, socket_port, CONFIRM_COOPERATION, peer_ip};
+
+          char* msg_data;
+          asprintf(&msg_data, "%s:%d", received_msg.sender_ip, received_msg.sender_port);
+
+          struct MSG confirm = {local_ip, socket_port, CONFIRM_COOPERATION, msg_data};
           char *tmp = serialize_msg(&confirm);
           send(redbean_server, tmp, strlen(tmp), 0);
           free(tmp);
+          free(msg_data);
         } else if (received_msg.type == SETUP_COOPERATION) {
           // We received a SETUP_COOPERATION from the redbean we contacted (a peer). Save it and tell browser client to initialize cooperation
           snprintf(peer_ip, 22, received_msg.sender_ip);
