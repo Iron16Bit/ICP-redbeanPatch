@@ -7076,8 +7076,7 @@ static void Listen(void) {
 
       if (bind(servers.p[n].fd, (struct sockaddr *)&servers.p[n].addr,
                sizeof(servers.p[n].addr)) == -1) {
-        DIEF("(srvr) bind error: %m: %hhu.%hhu.%hhu.%hhu:%hu", ips.p[i] >> 24,
-             ips.p[i] >> 16, ips.p[i] >> 8, ips.p[i], ports.p[j]);
+        DIEF("Error creating redbean server. Port %d already in use\nUse the following parameters to change the sockets used:\n-p #### : open redbean HTTP server on port #### [default 8080]\n-event #### : open event server on port #### [default 3000]\n-socket #### : open socket server on port #### [default 3030]\n", ports.p[j]);
       }
       if (listen(servers.p[n].fd, 10) == -1) {
         DIEF("(srvr) listen error: %m");
@@ -7864,12 +7863,21 @@ int p2p_setup(int socket_port, int event_port) {
 
   // Bind the sockets
   if (bind(server_main, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
-    perror("server_main bind error");
+    printf("\nError creating Event Server. Port %d already in use\n", event_port);
+    printf("Use the following parameters to change the sockets used:\n");
+    printf("-p #### : open redbean HTTP server on port #### [default 8080]\n");
+    printf("-event #### : open event server on port #### [default 3000]\n");
+    printf("-socket #### : open socket server on port #### [default 3030]\n");
     close(server_main);
     return 1;
   }
   if (bind(client_main, (struct sockaddr *)&client_addr, sizeof(client_addr)) == -1) {
-    perror("client_main bind error");
+    printf("\nError creating Socket Server. Port %d already in use\n", socket_port);
+    printf("Use the following parameters to change the sockets used:\n");
+    printf("-p #### : open redbean HTTP server on port #### [default 8080]\n");
+    printf("-event #### : open event server on port #### [default 3000]\n");
+    printf("-socket #### : open socket server on port #### [default 3030]\n");
+    close(server_main);
     close(client_main);
     return 1;
   }
@@ -7882,6 +7890,7 @@ int p2p_setup(int socket_port, int event_port) {
   }
   if (listen(client_main, BACKLOG) == -1) {
     perror("client_main listen error");
+    close(server_main);
     close(client_main);
     return 1;
   }
@@ -8148,7 +8157,11 @@ int main(int argc, char *argv[]) {
   argc = new_argc;
   argv = new_argv;
 
-  p2p_setup(socket_port, event_port);
+  int ret = p2p_setup(socket_port, event_port);
+
+  if (ret == 1) {
+    exit(1);
+  }
 
   printf("\nICPs slides available at: http://127.0.0.1:%d/?port=%d\n\n", redbean_port, event_port);
 
